@@ -1,0 +1,38 @@
+# 接口自动化测试平台依赖包
+
+# HTTP请求
+requests==2.31.0
+
+# 测试框架
+pytest==7.4.2
+pytest-html==3.2.0
+pytest-xdist==3.3.1
+pytest-ordering==0.6
+pytest-rerunfailures==12.0
+
+# 测试报告
+allure-pytest==2.13.2
+
+# 数据处理
+PyYAML==6.0.1
+openpyxl==3.1.2
+numpy==1.26.0
+pandas==2.1.1
+jsonpath==0.82
+
+# 日志处理
+loguru==0.7.0
+
+# 其他工具
+python-dotenv==1.0.0
+pytz==2023.3
+faker==19.6.2
+
+# 数据库操作(可选)
+# PyMySQL==1.1.0
+# pymongo==4.5.0
+
+# Web应用
+Flask==3.0.0
+waitress==2.1.2
+APScheduler==3.10.4

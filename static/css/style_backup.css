@@ -1,0 +1,127 @@
+
+/**
+ * API自动化测试平台 - 样式文件
+ */
+
+/* 全局样式 */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f8f9fa;
+}
+
+/* 导航栏样式 */
+.navbar-brand {
+    font-weight: bold;
+    font-size: 1.5rem;
+}
+
+/* 卡片样式 */
+.card {
+    border-radius: 0.5rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    margin-bottom: 1rem;
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.125);
+    font-weight: 600;
+}
+
+/* 手风琴样式 */
+.accordion-button:not(.collapsed) {
+    background-color: #e9ecef;
+    color: #0d6efd;
+}
+
+.accordion-button:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* 按钮样式 */
+.btn {
+    border-radius: 0.25rem;
+    font-weight: 500;
+}
+
+.btn-group-sm > .btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+/* 表单样式 */
+.form-control, .form-select {
+    border-radius: 0.25rem;
+}
+
+.form-label {
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+}
+
+/* 表格样式 */
+.table {
+    background-color: #fff;
+}
+
+.table thead th {
+    border-top: none;
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+}
+
+/* 模态框样式 */
+.modal-header {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.modal-title {
+    font-weight: 600;
+}
+
+/* Toast样式 */
+.toast {
+    border-radius: 0.5rem;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.toast-header {
+    font-weight: 600;
+}
+
+/* 响应结果区域 */
+#debugResult {
+    margin-top: 1.5rem;
+}
+
+#responseData {
+    max-height: 400px;
+    overflow-y: auto;
+    border-radius: 0.25rem;
+}
+
+/* 徽章样式 */
+.badge {
+    font-weight: 500;
+    padding: 0.35em 0.65em;
+}
+
+/* 加载动画 */
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+    border-width: 0.15em;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    .btn-group-sm > .btn {
+        padding: 0.125rem 0.25rem;
+        font-size: 0.75rem;
+    }
+
+    .card-body {
+        padding: 0.75rem;
+    }
+}

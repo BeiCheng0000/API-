@@ -1,0 +1,101 @@
+<!-- 编辑API模态框 -->
+<div class="modal fade" id="editApiModal" tabindex="-1" aria-labelledby="editApiModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editApiModalLabel"><i class="bi bi-pencil me-2"></i>编辑接口</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editApiForm">
+                    <input type="hidden" id="editApiName" name="api_name">
+                    <input type="hidden" id="editCaseIndex" name="case_index">
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="editCaseName" class="form-label">用例名称 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="editCaseName" name="case_name" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="editMethod" class="form-label">请求方法</label>
+                            <select class="form-select" id="editMethod" name="method">
+                                <option value="GET">GET</option>
+                                <option value="POST">POST</option>
+                                <option value="PUT">PUT</option>
+                                <option value="DELETE">DELETE</option>
+                                <option value="PATCH">PATCH</option>
+                            </select>
+                        </div>
+                        <div class="col-md-9">
+                            <label for="editUrl" class="form-label">请求URL <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="editUrl" name="url" required>
+                        </div>
+                        <div class="col-md-12">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="form-label mb-0">请求头</label>
+                                <button type="button" class="btn-add-row" onclick="addKvRow('editHeadersTable')"><i class="bi bi-plus-lg"></i> 添加</button>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="kv-table" id="editHeadersTable">
+                                    <thead>
+                                        <tr>
+                                            <th class="col-key">Key</th>
+                                            <th class="col-value">Value</th>
+                                            <th class="col-action"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                            <input type="hidden" id="editHeaders" name="headers">
+                        </div>
+                        <div class="col-md-12">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="form-label mb-0">请求体</label>
+                                <div class="editor-mode-switch">
+                                    <button type="button" class="mode-btn active" onclick="switchBodyMode('edit', 'table')">表格</button>
+                                    <button type="button" class="mode-btn" onclick="switchBodyMode('edit', 'json')">JSON</button>
+                                </div>
+                            </div>
+                            <div id="editBodyTableMode">
+                                <div class="table-responsive">
+                                    <table class="kv-table" id="editBodyTable">
+                                        <thead>
+                                            <tr>
+                                                <th class="col-key">Key</th>
+                                                <th class="col-type">类型</th>
+                                                <th class="col-value">Value</th>
+                                                <th class="col-action"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                                <button type="button" class="btn-add-row" onclick="addKvRow('editBodyTable', true)"><i class="bi bi-plus-lg"></i> 添加</button>
+                            </div>
+                            <div id="editBodyJsonMode" style="display: none;">
+                                <textarea class="form-control font-monospace" id="editDataJson" rows="5" placeholder='{"key": "value"}'></textarea>
+                            </div>
+                            <input type="hidden" id="editData" name="data">
+                        </div>
+                        <div class="col-md-12">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="form-label mb-0">断言配置</label>
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditAssertion('editAssertionContainer')">
+                                    <i class="bi bi-plus"></i> 添加断言
+                                </button>
+                            </div>
+                            <div id="editAssertionContainer">
+                                <!-- 断言项将通过JavaScript动态添加 -->
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveEditApi()"><i class="bi bi-check-lg me-1"></i>保存</button>
+            </div>
+        </div>
+    </div>
+</div>

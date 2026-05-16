@@ -1,0 +1,1433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API自动化测试平台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+</head>
+<body>
+    <!-- 侧边栏 -->
+    <nav id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-brand">
+                <i class="bi bi-gear-wide-connected"></i>
+                <span>API Test Platform</span>
+            </div>
+        </div>
+        <div class="sidebar-menu">
+            <div class="menu-section">主导航</div>
+            <a href="#" class="menu-item active" data-page="projects" onclick="switchPage('projects', this)">
+                <i class="bi bi-folder2-open"></i>
+                <span>API项目</span>
+                <span class="menu-badge" id="projectCount">{{ projects_data|length }}</span>
+            </a>
+            <a href="#" class="menu-item" data-page="scheduler" onclick="switchPage('scheduler', this)">
+                <i class="bi bi-clock-history"></i>
+                <span>定时任务</span>
+            </a>
+            <a href="#" class="menu-item" data-page="debug" onclick="switchPage('debug', this)">
+                <i class="bi bi-bug"></i>
+                <span>接口调试</span>
+            </a>
+            <a href="#" class="menu-item" data-page="statistics" onclick="switchPage('statistics', this)">
+                <i class="bi bi-bar-chart-line"></i>
+                <span>数据统计</span>
+            </a>
+            <div class="menu-section">系统</div>
+            <a href="#" class="menu-item" onclick="exportData()">
+                <i class="bi bi-download"></i>
+                <span>数据导出</span>
+            </a>
+            <a href="#" class="menu-item" onclick="importData()">
+                <i class="bi bi-upload"></i>
+                <span>数据导入</span>
+            </a>
+        </div>
+        <div class="sidebar-footer">
+            <small>API自动化测试平台 v2.0</small>
+        </div>
+    </nav>
+
+    <!-- 主内容区 -->
+    <div id="main-content" class="main-content">
+        <!-- 顶部导航栏 -->
+        <nav class="top-navbar">
+            <div class="d-flex align-items-center">
+                <button class="btn btn-ghost btn-sm me-2 d-lg-none" onclick="toggleSidebar()">
+                    <i class="bi bi-list fs-5"></i>
+                </button>
+                <nav aria-label="breadcrumb">
+                    <ol class="breadcrumb mb-0">
+                        <li class="breadcrumb-item"><a href="#"><i class="bi bi-house-door"></i></a></li>
+                        <li class="breadcrumb-item active" id="breadcrumbCurrent">API项目</li>
+                    </ol>
+                </nav>
+            </div>
+            <div class="d-flex align-items-center gap-2" id="topNavbarActions">
+                <button class="btn btn-sm btn-primary" onclick="showAddProjectModal()">
+                    <i class="bi bi-plus-lg me-1"></i> 新增项目
+                </button>
+            </div>
+        </nav>
+
+        <!-- 统计卡片 -->
+        <div class="container-fluid px-4 py-3" id="topStatCards">
+            <div class="row g-3">
+                <div class="col-xl-3 col-md-6">
+                    <div class="stat-card stat-card-primary">
+                        <div class="stat-card-body">
+                            <div class="stat-card-info">
+                                <div class="stat-card-label">项目总数</div>
+                                <div class="stat-card-value" id="statProjects">{{ projects_data|length }}</div>
+                            </div>
+                            <div class="stat-card-icon"><i class="bi bi-folder2-open"></i></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-3 col-md-6">
+                    <div class="stat-card stat-card-success">
+                        <div class="stat-card-body">
+                            <div class="stat-card-info">
+                                <div class="stat-card-label">模块总数</div>
+                                <div class="stat-card-value" id="statModules">0</div>
+                            </div>
+                            <div class="stat-card-icon"><i class="bi bi-collection"></i></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-3 col-md-6">
+                    <div class="stat-card stat-card-warning">
+                        <div class="stat-card-body">
+                            <div class="stat-card-info">
+                                <div class="stat-card-label">接口总数</div>
+                                <div class="stat-card-value" id="statApis">0</div>
+                            </div>
+                            <div class="stat-card-icon"><i class="bi bi-plug"></i></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-3 col-md-6">
+                    <div class="stat-card stat-card-info">
+                        <div class="stat-card-body">
+                            <div class="stat-card-info">
+                                <div class="stat-card-label">定时任务</div>
+                                <div class="stat-card-value" id="statSchedulers">0</div>
+                            </div>
+                            <div class="stat-card-icon"><i class="bi bi-clock-history"></i></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 页面内容区 -->
+        <div class="container-fluid px-4 pb-4">
+            <!-- API项目页 -->
+            <div id="page-projects" class="page-content active">
+                <div class="project-layout">
+                    <!-- 左栏：项目树（项目+模块+环境变量） -->
+                    <div class="project-panel project-panel-tree">
+                        <div class="content-card h-100">
+                            <div class="content-card-header">
+                                <h6 class="content-card-title"><i class="bi bi-folder2-open me-2"></i>项目</h6>
+                                <div class="content-card-actions">
+                                    <div class="input-group input-group-sm" style="width: 140px;">
+                                        <span class="input-group-text bg-transparent border-end-0"><i class="bi bi-search text-muted"></i></span>
+                                        <input type="text" class="form-control border-start-0 ps-0" placeholder="搜索..." id="projectSearch" oninput="filterProjects(this.value)">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="content-card-body p-0 project-scroll-area">
+                                <div id="projectsList">
+                                    {% for project_name, project_data in projects_data.items() %}
+                                    <div class="tree-project" data-project="{{ project_name }}">
+                                        <div class="tree-project-row" onclick="toggleProject(this.parentElement)">
+                                            <div class="tree-toggle"><i class="bi bi-chevron-right"></i></div>
+                                            <div class="tree-project-icon"><i class="bi bi-folder-fill"></i></div>
+                                            <div class="tree-project-info">
+                                                <div class="tree-project-name">{{ project_name }}</div>
+                                            </div>
+                                            <div class="tree-project-actions">
+                                                <button class="btn btn-icon btn-icon-sm btn-soft-warning" data-project="{{ project_name }}" data-desc="{{ (project_data.description or '')|e }}" onclick="event.stopPropagation(); showEditProjectModal(this.dataset.project, this.dataset.desc)" title="编辑项目"><i class="bi bi-pencil"></i></button>
+                                                <button class="btn btn-icon btn-icon-sm btn-soft-primary" data-project="{{ project_name }}" onclick="event.stopPropagation(); showAddModuleModal(this.dataset.project)" title="添加模块"><i class="bi bi-plus-lg"></i></button>
+                                                <button class="btn btn-icon btn-icon-sm btn-soft-info" data-project="{{ project_name }}" onclick="event.stopPropagation(); showProjectEnvModal(this.dataset.project)" title="环境配置"><i class="bi bi-globe2"></i></button>
+                                                <button class="btn btn-icon btn-icon-sm btn-soft-secondary" data-project="{{ project_name }}" onclick="event.stopPropagation(); showProjectVarModal(this.dataset.project)" title="变量管理"><i class="bi bi-braces"></i></button>
+                                                {% if project_data.modules|length > 0 %}
+                                                <button class="btn btn-icon btn-icon-sm btn-soft-danger" disabled title="请先删除所有模块"><i class="bi bi-trash3"></i></button>
+                                                {% else %}
+                                                <button class="btn btn-icon btn-icon-sm btn-soft-danger" data-project="{{ project_name }}" onclick="event.stopPropagation(); deleteProject(this.dataset.project)" title="删除项目"><i class="bi bi-trash3"></i></button>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="tree-project-children" id="projectChildren-{{ project_name|replace(' ', '_') }}">
+                                            {% for module_name, module_data in project_data.modules.items() %}
+                                            <div class="tree-module" data-project="{{ project_name }}" data-module="{{ module_name }}" onclick="selectModule('{{ project_name }}', '{{ module_name }}')">
+                                                <div class="tree-module-icon"><i class="bi bi-collection-fill"></i></div>
+                                                <div class="tree-module-info">
+                                                    <div class="tree-module-name">{{ module_name }}</div>
+                                                    <div class="tree-module-stat">{{ module_data.apis|length }} 个接口</div>
+                                                </div>
+                                                <div class="tree-module-actions">
+                                                    <button class="btn btn-icon btn-icon-sm btn-soft-success" data-project="{{ project_name }}" data-module="{{ module_name }}" onclick="event.stopPropagation(); runModuleTests(this.dataset.project, this.dataset.module)" title="运行全部"><i class="bi bi-play-fill"></i></button>
+                                                    <button class="btn btn-icon btn-icon-sm btn-soft-primary" data-project="{{ project_name }}" data-module="{{ module_name }}" onclick="event.stopPropagation(); showAddApiModal(this.dataset.project, this.dataset.module)" title="添加接口"><i class="bi bi-plus-lg"></i></button>
+                                                    <button class="btn btn-icon btn-icon-sm btn-soft-warning" data-project="{{ project_name }}" data-module="{{ module_name }}" data-desc="{{ (module_data.description or '')|e }}" onclick="event.stopPropagation(); showEditModuleModal(this.dataset.project, this.dataset.module, this.dataset.desc)" title="编辑模块"><i class="bi bi-pencil"></i></button>
+                                                    {% if module_data.apis|length > 0 %}
+                                                    <button class="btn btn-icon btn-icon-sm btn-soft-danger" disabled title="请先删除所有接口"><i class="bi bi-trash3"></i></button>
+                                                    {% else %}
+                                                    <button class="btn btn-icon btn-icon-sm btn-soft-danger" data-project="{{ project_name }}" data-module="{{ module_name }}" onclick="event.stopPropagation(); deleteModule(this.dataset.project, this.dataset.module)" title="删除模块"><i class="bi bi-trash3"></i></button>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                            {% endfor %}
+                                            {% if not project_data.modules %}
+                                            <div class="tree-empty-hint">
+                                                <span>暂无模块</span>
+                                                <button type="button" class="btn btn-sm btn-link py-0" data-project="{{ project_name }}" onclick="event.stopPropagation(); showAddModuleModal(this.dataset.project)"><i class="bi bi-plus-lg"></i>添加</button>
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                    {% if not projects_data %}
+                                    <div class="empty-state">
+                                        <div class="empty-state-icon"><i class="bi bi-folder2-open"></i></div>
+                                        <div class="empty-state-title">暂无项目</div>
+                                        <div class="empty-state-desc">点击上方按钮添加第一个项目</div>
+                                        <button type="button" class="btn btn-primary btn-sm mt-2" onclick="showAddProjectModal()"><i class="bi bi-plus-lg me-1"></i> 添加项目</button>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 右栏：接口列表 -->
+                    <div class="project-panel project-panel-apis">
+                        <div class="content-card h-100">
+                            <div class="content-card-header">
+                                <h6 class="content-card-title"><i class="bi bi-plug me-2"></i>接口</h6>
+                                <div class="content-card-actions" id="apiPanelActions" style="display:none;">
+                                </div>
+                            </div>
+                            <div class="content-card-body project-scroll-area">
+                                <div id="apisList">
+                                    <div class="empty-state">
+                                        <div class="empty-state-icon"><i class="bi bi-cursor-fill"></i></div>
+                                        <div class="empty-state-title">请选择模块</div>
+                                        <div class="empty-state-desc">展开项目并选择一个模块查看接口</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 定时任务页 -->
+            <div id="page-scheduler" class="page-content">
+                <div class="project-layout">
+                    <!-- 左栏：项目树 -->
+                    <div class="project-panel project-panel-tree">
+                        <div class="content-card h-100">
+                            <div class="content-card-header">
+                                <h6 class="content-card-title"><i class="bi bi-folder2-open me-2"></i>项目</h6>
+                                <div class="content-card-actions">
+                                    <div class="input-group input-group-sm" style="width: 140px;">
+                                        <span class="input-group-text bg-transparent border-end-0"><i class="bi bi-search text-muted"></i></span>
+                                        <input type="text" class="form-control border-start-0 ps-0" placeholder="搜索..." id="schedulerProjectSearch" oninput="filterSchedulerProjects(this.value)">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="content-card-body p-0 project-scroll-area">
+                                <div id="schedulerProjectsList">
+                                    <!-- 动态加载项目树 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 右栏：定时任务列表 -->
+                    <div class="project-panel project-panel-apis">
+                        <div class="content-card h-100">
+                            <div class="content-card-header">
+                                <h6 class="content-card-title"><i class="bi bi-clock-history me-2"></i>定时任务</h6>
+                                <div class="content-card-actions" id="schedulerPanelActions" style="display:none;">
+                                </div>
+                            </div>
+                            <div class="content-card-body project-scroll-area">
+                                <div id="schedulerJobsList">
+                                    <div class="empty-state">
+                                        <div class="empty-state-icon"><i class="bi bi-clock-history"></i></div>
+                                        <div class="empty-state-title">请选择模块</div>
+                                        <div class="empty-state-desc">展开项目并选择一个模块查看定时任务</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 接口调试页 -->
+            <div id="page-debug" class="page-content">
+                <div class="row g-4">
+                    <div class="col-lg-6">
+                        <div class="content-card" id="api-debug">
+                            <div class="content-card-header">
+                                <h6 class="content-card-title"><i class="bi bi-send me-2"></i>请求配置</h6>
+                            </div>
+                            <div class="content-card-body">
+                                <input type="hidden" id="debugProjectName" value="">
+                                <input type="hidden" id="debugModuleName" value="">
+                                <input type="hidden" id="debugCaseName" value="">
+                                <div class="mb-3">
+                                    <div class="row g-2">
+                                        <div class="col-auto" style="width: 120px;">
+                                            <select class="form-select" id="apiMethod">
+                                                <option value="GET">GET</option>
+                                                <option value="POST">POST</option>
+                                                <option value="PUT">PUT</option>
+                                                <option value="DELETE">DELETE</option>
+                                                <option value="PATCH">PATCH</option>
+                                            </select>
+                                        </div>
+                                        <div class="col">
+                                            <input type="text" class="form-control" id="apiUrl" placeholder="请输入请求URL">
+                                        </div>
+                                        <div class="col-auto">
+                                            <button class="btn btn-primary" onclick="debugApi()"><i class="bi bi-send me-1"></i>发送</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <ul class="nav nav-tabs" role="tablist">
+                                    <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#debugHeaders">Headers</a></li>
+                                    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#debugBody">Body</a></li>
+                                    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#debugAssertions">断言</a></li>
+                                </ul>
+                                <div class="tab-content pt-3">
+                                    <div class="tab-pane fade show active" id="debugHeaders">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span></span>
+                                            <div class="editor-mode-switch">
+                                                <button type="button" class="mode-btn active" onclick="switchDebugHeaderMode('table')">表格</button>
+                                                <button type="button" class="mode-btn" onclick="switchDebugHeaderMode('json')">JSON</button>
+                                            </div>
+                                        </div>
+                                        <div id="debugHeadersTableMode">
+                                            <div class="table-responsive">
+                                                <table class="kv-table" id="debugHeadersTable">
+                                                    <thead>
+                                                        <tr>
+                                                            <th class="col-key">Key</th>
+                                                            <th class="col-value">Value</th>
+                                                            <th class="col-action"></th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody></tbody>
+                                                </table>
+                                            </div>
+                                            <button type="button" class="btn-add-row" onclick="addKvRow('debugHeadersTable')"><i class="bi bi-plus-lg"></i> 添加</button>
+                                        </div>
+                                        <div id="debugHeadersJsonMode" style="display: none;">
+                                            <textarea class="form-control font-monospace" id="apiHeaders" rows="6" placeholder='{"Content-Type": "application/json"}'></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="tab-pane fade" id="debugBody">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span></span>
+                                            <div class="editor-mode-switch">
+                                                <button type="button" class="mode-btn active" onclick="switchDebugBodyMode('table')">表格</button>
+                                                <button type="button" class="mode-btn" onclick="switchDebugBodyMode('json')">JSON</button>
+                                            </div>
+                                        </div>
+                                        <div id="debugBodyTableMode">
+                                            <div class="table-responsive">
+                                                <table class="kv-table" id="debugBodyTable">
+                                                    <thead>
+                                                        <tr>
+                                                            <th class="col-key">Key</th>
+                                                            <th class="col-type">类型</th>
+                                                            <th class="col-value">Value</th>
+                                                            <th class="col-action"></th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody></tbody>
+                                                </table>
+                                            </div>
+                                            <button type="button" class="btn-add-row" onclick="addKvRow('debugBodyTable', true)"><i class="bi bi-plus-lg"></i> 添加</button>
+                                        </div>
+                                        <div id="debugBodyJsonMode" style="display: none;">
+                                            <textarea class="form-control font-monospace" id="apiData" rows="6" placeholder='{"key": "value"}'></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="tab-pane fade" id="debugAssertions">
+                                        <div id="assertionContainer"></div>
+                                        <button class="btn btn-sm btn-outline-primary mt-2" onclick="addAssertion()"><i class="bi bi-plus-lg me-1"></i>添加断言</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="content-card" id="debugResult" style="display: none;">
+                            <div class="content-card-header">
+                                <h6 class="content-card-title"><i class="bi bi-reply me-2"></i>响应结果</h6>
+                            </div>
+                            <div class="content-card-body">
+                                <!-- 实际请求信息 - 默认折叠 -->
+                                <div class="border rounded p-0 mb-3" id="debugRequestSection">
+                                    <div class="d-flex justify-content-between align-items-center px-3 py-2" style="cursor:pointer;" onclick="toggleDebugRequest()" role="button" aria-expanded="false">
+                                        <span class="fw-bold" style="font-size:0.9rem;"><i class="bi bi-chevron-right me-1 transition" id="debugRequestToggleIcon"></i><i class="bi bi-arrow-up-right-square me-1"></i>实际请求</span>
+                                        <small class="text-muted">点击展开/折叠</small>
+                                    </div>
+                                    <div class="px-3 pb-3" id="debugRequestContent" style="display:none;">
+                                        <div class="row g-2 mb-2">
+                                            <div class="col-md-2">
+                                                <div class="card h-100">
+                                                    <div class="card-body py-2 px-3">
+                                                        <small class="text-muted">请求方法</small>
+                                                        <div id="debugRequestMethod" class="fw-bold"></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-10">
+                                                <div class="card h-100">
+                                                    <div class="card-body py-2 px-3">
+                                                        <small class="text-muted">请求URL</small>
+                                                        <div id="debugRequestUrl" class="fw-bold text-break" style="font-size: 0.85rem;"></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="row g-2">
+                                            <div class="col-md-6">
+                                                <small class="text-muted fw-bold">请求头</small>
+                                                <pre class="bg-light p-2 rounded mt-1 mb-0" style="max-height: 180px; overflow-y: auto; font-size: 0.8rem;"><code id="debugRequestHeaders"></code></pre>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <small class="text-muted fw-bold">请求体</small>
+                                                <pre class="bg-light p-2 rounded mt-1 mb-0" style="max-height: 180px; overflow-y: auto; font-size: 0.8rem;"><code id="debugRequestBody"></code></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <hr>
+
+                                <div class="d-flex gap-2 mb-3">
+                                    <span id="statusCode"></span>
+                                    <span id="responseTime"></span>
+                                </div>
+                                <div id="assertionResult" style="display: none;">
+                                    <div class="d-flex align-items-center gap-2 mb-2">
+                                        <span class="fw-bold">断言结果:</span>
+                                        <span id="assertionSummary"></span>
+                                    </div>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-hover mb-0">
+                                            <thead class="table-light">
+                                                <tr><th>类型</th><th>字段</th><th>期望</th><th>实际</th><th>结果</th></tr>
+                                            </thead>
+                                            <tbody id="assertionTableBody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <h6 class="fw-bold mb-2">响应头</h6>
+                                    <pre class="bg-light p-3 rounded"><code id="debugResponseHeaders"></code></pre>
+                                </div>
+                                <div class="mb-3">
+                                    <h6 class="fw-bold mb-2">响应体</h6>
+                                    <pre class="bg-light p-3 rounded"><code id="debugResponseBody"></code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 数据统计页面 -->
+            <div id="page-statistics" class="page-content">
+                <!-- 页面标题 -->
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0"><i class="bi bi-bar-chart-line me-2"></i>数据统计</h5>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-success btn-sm" onclick="exportStatistics()"><i class="bi bi-file-earmark-excel me-1"></i>导出Excel</button>
+                    <button class="btn btn-outline-danger btn-sm" onclick="clearStatistics()"><i class="bi bi-trash me-1"></i>清空</button>
+                </div>
+            </div>
+
+            <!-- 统计概览卡片 -->
+            <div class="row g-2 mb-2">
+                <div class="col-lg-2 col-md-4 col-sm-6">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body py-2 px-3">
+                            <div class="d-flex align-items-center">
+                                <div class="rounded-3 bg-primary bg-opacity-10 p-1 me-2"><i class="bi bi-send text-primary"></i></div>
+                                <div>
+                                    <div class="text-muted" style="font-size:0.75rem;">总请求数</div>
+                                    <div class="fs-5 fw-bold text-primary mb-0" id="statTotalCount">0</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-2 col-md-4 col-sm-6">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body py-2 px-3">
+                            <div class="d-flex align-items-center">
+                                <div class="rounded-3 bg-success bg-opacity-10 p-1 me-2"><i class="bi bi-check-circle text-success"></i></div>
+                                <div>
+                                    <div class="text-muted" style="font-size:0.75rem;">成功请求</div>
+                                    <div class="fs-5 fw-bold text-success mb-0" id="statSuccessCount">0</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-2 col-md-4 col-sm-6">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body py-2 px-3">
+                            <div class="d-flex align-items-center">
+                                <div class="rounded-3 bg-danger bg-opacity-10 p-1 me-2"><i class="bi bi-x-circle text-danger"></i></div>
+                                <div>
+                                    <div class="text-muted" style="font-size:0.75rem;">失败请求</div>
+                                    <div class="fs-5 fw-bold text-danger mb-0" id="statFailCount">0</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-2 col-md-4 col-sm-6">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body py-2 px-3">
+                            <div class="d-flex align-items-center">
+                                <div class="rounded-3 bg-info bg-opacity-10 p-1 me-2"><i class="bi bi-speedometer2 text-info"></i></div>
+                                <div>
+                                    <div class="text-muted" style="font-size:0.75rem;">平均响应</div>
+                                    <div class="fs-5 fw-bold text-info mb-0" id="statAvgTime">0ms</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-2 col-md-4 col-sm-6">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body py-2 px-3">
+                            <div class="d-flex align-items-center">
+                                <div class="rounded-3 bg-warning bg-opacity-10 p-1 me-2"><i class="bi bi-lightning text-warning"></i></div>
+                                <div>
+                                    <div class="text-muted" style="font-size:0.75rem;">最快/最慢</div>
+                                    <div class="fw-bold mb-0" style="font-size:0.95rem;"><span class="text-success" id="statMinTime">-</span> / <span class="text-danger" id="statMaxTime">-</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-2 col-md-4 col-sm-6">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body py-2 px-3">
+                            <div class="d-flex align-items-center">
+                                <div class="rounded-3 p-1 me-2" style="background-color: rgba(111,66,193,0.1)!important;"><i class="bi bi-check2-all" style="color:#6f42c1;"></i></div>
+                                <div>
+                                    <div class="text-muted" style="font-size:0.75rem;">断言通过率</div>
+                                    <div class="fs-5 fw-bold mb-0" style="color:#6f42c1;" id="statAssertionRate">0%</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 图表区域 -->
+            <div class="row g-2 mb-2">
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-header bg-white border-0 py-1 px-3"><small class="fw-bold"><i class="bi bi-pie-chart me-1"></i>状态码分布</small></div>
+                        <div class="card-body d-flex justify-content-center align-items-center p-2" style="height:180px;">
+                            <canvas id="statChartStatus"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-header bg-white border-0 py-1 px-3"><small class="fw-bold"><i class="bi bi-bar-chart me-1"></i>请求方法分布</small></div>
+                        <div class="card-body d-flex justify-content-center align-items-center p-2" style="height:180px;">
+                            <canvas id="statChartMethod"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-header bg-white border-0 py-1 px-3"><small class="fw-bold"><i class="bi bi-graph-up me-1"></i>响应时间趋势</small></div>
+                        <div class="card-body p-2" style="height:180px;">
+                            <canvas id="statChartTrend"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 筛选搜索区域 -->
+            <div class="card border-0 shadow-sm mb-2">
+                <div class="card-body py-2">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-2">
+                            <label class="form-label small text-muted mb-1">项目</label>
+                            <select class="form-select form-select-sm" id="statFilterProject" onchange="onStatFilterProjectChange()">
+                                <option value="">全部项目</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small text-muted mb-1">模块</label>
+                            <select class="form-select form-select-sm" id="statFilterModule">
+                                <option value="">全部模块</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small text-muted mb-1">请求方法</label>
+                            <select class="form-select form-select-sm" id="statFilterMethod">
+                                <option value="">全部</option>
+                                <option value="GET">GET</option>
+                                <option value="POST">POST</option>
+                                <option value="PUT">PUT</option>
+                                <option value="DELETE">DELETE</option>
+                                <option value="PATCH">PATCH</option>
+                            </select>
+                        </div>
+                        <div class="col-md-1">
+                            <label class="form-label small text-muted mb-1">状态码</label>
+                            <select class="form-select form-select-sm" id="statFilterStatus">
+                                <option value="">全部</option>
+                                <option value="2xx">2xx</option>
+                                <option value="4xx">4xx</option>
+                                <option value="5xx">5xx</option>
+                            </select>
+                        </div>
+                        <div class="col-md-1">
+                            <label class="form-label small text-muted mb-1">断言</label>
+                            <select class="form-select form-select-sm" id="statFilterAssertion">
+                                <option value="">全部</option>
+                                <option value="passed">通过</option>
+                                <option value="failed">失败</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small text-muted mb-1">开始日期</label>
+                            <input type="date" class="form-control form-control-sm" id="statFilterDateStart">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small text-muted mb-1">结束日期</label>
+                            <input type="date" class="form-control form-control-sm" id="statFilterDateEnd">
+                        </div>
+                        <div class="col-md-12 mt-1">
+                            <div class="d-flex gap-1 align-items-center">
+                                <input type="text" class="form-control form-control-sm" style="max-width:300px;" id="statFilterKeyword" placeholder="搜索URL或项目名称..." onkeydown="if(event.key==='Enter')loadStatistics()">
+                                <button class="btn btn-primary btn-sm" onclick="loadStatistics()"><i class="bi bi-search me-1"></i>搜索</button>
+                                <button class="btn btn-outline-secondary btn-sm" onclick="resetStatFilters()" title="重置筛选"><i class="bi bi-arrow-counterclockwise"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 数据表格 -->
+            <div class="stat-table-wrapper">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0 align-middle">
+                        <thead>
+                            <tr>
+                                <th style="width:40px"><i class="bi bi-hash"></i></th>
+                                <th style="width:110px"><i class="bi bi-folder2-open"></i> 项目</th>
+                                <th style="width:110px"><i class="bi bi-collection"></i> 模块</th>
+                                <th style="width:130px"><i class="bi bi-plug"></i> 接口名称</th>
+                                <th style="width:80px"><i class="bi bi-signpost-2"></i> 请求模式</th>
+                                <th style="width:80px"><i class="bi bi-arrow-right-circle"></i> 方法</th>
+                                <th><i class="bi bi-link-45deg"></i> URL</th>
+                                <th style="width:80px"><i class="bi bi-activity"></i> 状态码</th>
+                                <th style="width:100px"><i class="bi bi-speedometer2"></i> 响应时间</th>
+                                <th style="width:80px"><i class="bi bi-check2-circle"></i> 断言</th>
+                                <th style="width:140px"><i class="bi bi-clock-history"></i> 执行时间</th>
+                                <th style="width:50px"><i class="bi bi-gear"></i></th>
+                            </tr>
+                        </thead>
+                        <tbody id="statisticsTableBody">
+                            <tr><td colspan="12" class="text-center text-muted py-4">暂无数据</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div style="padding:12px 16px; background:#fff; border-top:1px solid #f1f5f9; border-radius:0 0 16px 16px;">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <small class="text-muted" id="statPaginationInfo">共 0 条记录</small>
+                            <div class="d-flex align-items-center gap-1">
+                                <small class="text-muted">每页</small>
+                                <select class="form-select form-select-sm" style="width:70px;" id="statPageSize" onchange="changeStatPageSize()">
+                                    <option value="10" selected>10</option>
+                                    <option value="20">20</option>
+                                    <option value="50">50</option>
+                                </select>
+                                <small class="text-muted">条</small>
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="d-flex gap-1" id="statPagination"></div>
+                            <div class="d-flex align-items-center gap-1 ms-2">
+                                <small class="text-muted">跳至</small>
+                                <input type="number" class="form-control form-control-sm" style="width:60px;" id="statJumpPage" min="1" onkeydown="if(event.key==='Enter')jumpStatPage()">
+                                <small class="text-muted">页</small>
+                                <button class="btn btn-sm btn-outline-primary" onclick="jumpStatPage()" title="跳转"><i class="bi bi-arrow-right-circle"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 统计详情模态框 -->
+    <div class="modal fade" id="statDetailModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-info-circle me-2"></i>请求详情</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-3">
+                            <div class="card h-100">
+                                <div class="card-body py-2 px-3">
+                                    <small class="text-muted">请求方法</small>
+                                    <div id="statDetailMethod" class="fw-bold"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card h-100">
+                                <div class="card-body py-2 px-3">
+                                    <small class="text-muted">状态码</small>
+                                    <div id="statDetailStatus" class="fw-bold"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card h-100">
+                                <div class="card-body py-2 px-3">
+                                    <small class="text-muted">响应时间</small>
+                                    <div id="statDetailTime" class="fw-bold"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card h-100">
+                                <div class="card-body py-2 px-3">
+                                    <small class="text-muted">断言结果</small>
+                                    <div id="statDetailAssertion" class="fw-bold"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <small class="text-muted fw-bold">请求URL</small>
+                        <div id="statDetailUrl" class="text-break mt-1" style="font-size: 0.85rem;"></div>
+                    </div>
+                    <!-- 实际请求 - 默认折叠 -->
+                    <div class="border rounded p-0 mb-3" id="statDetailRequestSection">
+                        <div class="d-flex justify-content-between align-items-center px-3 py-2" style="cursor:pointer;" onclick="toggleStatRequest()" role="button" aria-expanded="false">
+                            <span class="fw-bold" style="font-size:0.9rem;"><i class="bi bi-chevron-right me-1 transition" id="statRequestToggleIcon"></i>实际请求</span>
+                            <small class="text-muted">点击展开/折叠</small>
+                        </div>
+                        <div class="px-3 pb-3" id="statDetailRequestContent" style="display:none;">
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <small class="text-muted fw-bold">请求头</small>
+                                    <pre class="bg-light p-2 rounded mt-1 mb-0" style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;"><code id="statDetailReqHeaders"></code></pre>
+                                </div>
+                                <div class="col-md-6">
+                                    <small class="text-muted fw-bold">请求体</small>
+                                    <pre class="bg-light p-2 rounded mt-1 mb-0" style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;"><code id="statDetailReqBody"></code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 响应数据 - 始终展开 -->
+                    <!-- 断言结果表格 -->
+                    <div class="mb-3">
+                        <h6 class="fw-bold mb-2">断言结果</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>类型</th>
+                                        <th>字段</th>
+                                        <th>期望值</th>
+                                        <th>实际值</th>
+                                        <th>结果</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="statDetailAssertionTableBody">
+                                    <tr><td colspan="5" class="text-center text-muted">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <h6 class="fw-bold mb-2">响应头</h6>
+                        <pre class="bg-light p-3 rounded"><code id="statDetailResHeaders"></code></pre>
+                    </div>
+                    <div class="mb-3">
+                        <h6 class="fw-bold mb-2">响应体</h6>
+                        <pre class="bg-light p-3 rounded"><code id="statDetailResBody"></code></pre>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 项目环境管理模态框 -->
+    <div class="modal fade" id="projectEnvModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-globe2 me-2"></i>环境配置</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="envModalProjectName">
+                    <!-- 当前环境切换 -->
+                    <div class="env-switch-section mb-3">
+                        <h6 class="fw-bold mb-2"><i class="bi bi-lightning-charge me-1 text-warning"></i>当前环境</h6>
+                        <div class="d-flex align-items-center gap-2">
+                            <select class="form-select form-select-sm" id="envSwitchSelect" style="max-width: 200px;" onchange="onEnvSwitchChange(this.value)">
+                                <option value="">加载中...</option>
+                            </select>
+                            <span class="text-muted small" id="envSwitchBaseUrl" style="word-break: break-all;">-</span>
+                        </div>
+                    </div>
+                    <hr>
+                    <!-- 已有环境列表 -->
+                    <h6 class="fw-bold mb-2">已有环境</h6>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
+                                <tr><th>环境名称</th><th>域名</th><th style="width:120px;">操作</th></tr>
+                            </thead>
+                            <tbody id="envModalTableBody">
+                                <tr><td colspan="3" class="text-center text-muted">加载中...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <hr>
+                    <!-- 添加新环境 -->
+                    <h6 class="fw-bold mb-2">添加/编辑环境</h6>
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            <input type="text" class="form-control form-control-sm" id="envNameInput" placeholder="环境名称，如 dev">
+                        </div>
+                        <div class="col-md-7">
+                            <input type="text" class="form-control form-control-sm" id="envBaseUrlInput" placeholder="域名，如 https://dev-api.example.com">
+                        </div>
+                        <div class="col-md-2">
+                            <button type="button" class="btn btn-sm btn-primary w-100" onclick="saveProjectEnv()"><i class="bi bi-plus-lg me-1"></i>保存</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 项目变量管理模态框 -->
+    <div class="modal fade" id="projectVarModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-braces me-2"></i>项目变量</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="varModalProjectName">
+                    <div class="alert alert-info py-2 small mb-3">
+                        <i class="bi bi-info-circle me-1"></i>
+                        在接口的URL、请求头、请求体中使用 <code>{name}</code> 引用变量值，如添加变量 <strong>name</strong>，则用 <code>{name}</code> 引用
+                    </div>
+                    <!-- 已有变量列表 -->
+                    <div id="varListContainer" class="mb-3">
+                        <div id="varModalTableBody" class="d-flex flex-column gap-2">
+                            <div class="text-center text-muted small py-2">加载中...</div>
+                        </div>
+                    </div>
+                    <hr>
+                    <!-- 添加/编辑变量 -->
+                    <h6 class="fw-bold mb-2"><i class="bi bi-plus-circle me-1"></i>添加 / 编辑变量</h6>
+                    <div class="row g-2 align-items-end">
+                        <div class="col-5">
+                            <label class="form-label small mb-1">变量名</label>
+                            <input type="text" class="form-control form-control-sm" id="varKeyInput" placeholder="如 name">
+                        </div>
+                        <div class="col-5">
+                            <label class="form-label small mb-1">变量值</label>
+                            <input type="text" class="form-control form-control-sm" id="varValueInput" placeholder="如 张三">
+                        </div>
+                        <div class="col-2">
+                            <button type="button" class="btn btn-sm btn-primary w-100" onclick="saveProjectVar()" title="保存"><i class="bi bi-check-lg"></i></button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加项目模态框 -->
+    <div class="modal fade" id="addProjectModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-folder-plus me-2"></i>新增项目</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addProjectForm">
+                        <div class="mb-3">
+                            <label class="form-label">项目名称 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="projectName" placeholder="请输入项目名称" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">项目描述</label>
+                            <textarea class="form-control" id="projectDesc" rows="3" placeholder="请输入项目描述"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="addProject()"><i class="bi bi-check-lg me-1"></i>确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加模块模态框 -->
+    <div class="modal fade" id="addModuleModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-collection me-2"></i>新增模块</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addModuleForm">
+                        <input type="hidden" id="moduleProjectName">
+                        <div class="mb-3">
+                            <label class="form-label">模块名称 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="moduleName" placeholder="请输入模块名称" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">模块描述</label>
+                            <textarea class="form-control" id="moduleDesc" rows="3" placeholder="请输入模块描述"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="addModule()"><i class="bi bi-check-lg me-1"></i>确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑项目模态框 -->
+    <div class="modal fade" id="editProjectModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editProjectModalTitle"><i class="bi bi-pencil me-2"></i>编辑项目</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editProjectForm">
+                        <input type="hidden" id="editProjectOldName">
+                        <div class="mb-3">
+                            <label class="form-label">项目名称 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="editProjectName" placeholder="请输入项目名称" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">项目描述</label>
+                            <textarea class="form-control" id="editProjectDesc" rows="3" placeholder="请输入项目描述"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="updateProject()"><i class="bi bi-check-lg me-1"></i>保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑模块模态框 -->
+    <div class="modal fade" id="editModuleModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editModuleModalTitle"><i class="bi bi-pencil me-2"></i>编辑模块</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editModuleForm">
+                        <input type="hidden" id="editModuleProjectName">
+                        <input type="hidden" id="editModuleOldName">
+                        <div class="mb-3">
+                            <label class="form-label">模块名称 <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="editModuleName" placeholder="请输入模块名称" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">模块描述</label>
+                            <textarea class="form-control" id="editModuleDesc" rows="3" placeholder="请输入模块描述"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="updateModule()"><i class="bi bi-check-lg me-1"></i>保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加接口模态框 -->
+    <div class="modal fade" id="addApiModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-plug me-2"></i>新增接口</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addApiForm">
+                        <input type="hidden" id="apiProjectName">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">所属模块 <span class="text-danger">*</span></label>
+                                <select class="form-select" id="addApiModuleName" required>
+                                    <option value="">请选择模块</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">用例名称 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="addApiCaseName" placeholder="请输入用例名称" required>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">请求方法</label>
+                                <select class="form-select" id="addApiMethod">
+                                    <option value="GET">GET</option>
+                                    <option value="POST">POST</option>
+                                    <option value="PUT">PUT</option>
+                                    <option value="DELETE">DELETE</option>
+                                    <option value="PATCH">PATCH</option>
+                                </select>
+                            </div>
+                            <div class="col-md-9">
+                                <label class="form-label">请求URL <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="addApiUrl" placeholder="请输入请求URL" required>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label mb-0">请求头</label>
+                                    <button type="button" class="btn-add-row" onclick="addKvRow('addHeadersTable')"><i class="bi bi-plus-lg"></i> 添加</button>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="kv-table" id="addHeadersTable">
+                                        <thead>
+                                            <tr>
+                                                <th class="col-key">Key</th>
+                                                <th class="col-value">Value</th>
+                                                <th class="col-action"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                                <input type="hidden" id="addApiHeaders">
+                            </div>
+                            <div class="col-md-12">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label mb-0">请求体</label>
+                                    <div class="editor-mode-switch">
+                                        <button type="button" class="mode-btn active" onclick="switchBodyMode('add', 'table')">表格</button>
+                                        <button type="button" class="mode-btn" onclick="switchBodyMode('add', 'json')">JSON</button>
+                                    </div>
+                                </div>
+                                <div id="addBodyTableMode">
+                                    <div class="table-responsive">
+                                        <table class="kv-table" id="addBodyTable">
+                                            <thead>
+                                                <tr>
+                                                    <th class="col-key">Key</th>
+                                                    <th class="col-type">类型</th>
+                                                    <th class="col-value">Value</th>
+                                                    <th class="col-action"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody></tbody>
+                                        </table>
+                                    </div>
+                                    <button type="button" class="btn-add-row" onclick="addKvRow('addBodyTable', true)"><i class="bi bi-plus-lg"></i> 添加</button>
+                                </div>
+                                <div id="addBodyJsonMode" style="display: none;">
+                                    <textarea class="form-control font-monospace" id="addApiDataJson" rows="5" placeholder='{"key": "value"}'></textarea>
+                                </div>
+                                <input type="hidden" id="addApiData">
+                            </div>
+                            <div class="col-md-12">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label mb-0">断言配置</label>
+                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditAssertion('addAssertionContainer')">
+                                        <i class="bi bi-plus"></i> 添加断言
+                                    </button>
+                                </div>
+                                <div id="addAssertionContainer">
+                                    <!-- 断言项将通过JavaScript动态添加 -->
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="addApi()"><i class="bi bi-check-lg me-1"></i>确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑API模态框 -->
+    <div class="modal fade" id="editApiModal" tabindex="-1" aria-labelledby="editApiModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editApiModalLabel"><i class="bi bi-pencil me-2"></i>编辑接口</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editApiForm">
+                        <input type="hidden" id="editApiName" name="api_name">
+                        <input type="hidden" id="editCaseIndex" name="case_index">
+
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="editCaseName" class="form-label">用例名称 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="editCaseName" name="case_name" required>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="editMethod" class="form-label">请求方法</label>
+                                <select class="form-select" id="editMethod" name="method">
+                                    <option value="GET">GET</option>
+                                    <option value="POST">POST</option>
+                                    <option value="PUT">PUT</option>
+                                    <option value="DELETE">DELETE</option>
+                                    <option value="PATCH">PATCH</option>
+                                </select>
+                            </div>
+                            <div class="col-md-9">
+                                <label for="editUrl" class="form-label">请求URL <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="editUrl" name="url" required>
+                            </div>
+                            <div class="col-md-12">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label mb-0">请求头</label>
+                                    <button type="button" class="btn-add-row" onclick="addKvRow('editHeadersTable')"><i class="bi bi-plus-lg"></i> 添加</button>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="kv-table" id="editHeadersTable">
+                                        <thead>
+                                            <tr>
+                                                <th class="col-key">Key</th>
+                                                <th class="col-value">Value</th>
+                                                <th class="col-action"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                                <input type="hidden" id="editHeaders" name="headers">
+                            </div>
+                            <div class="col-md-12">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label mb-0">请求体</label>
+                                    <div class="editor-mode-switch">
+                                        <button type="button" class="mode-btn active" onclick="switchBodyMode('edit', 'table')">表格</button>
+                                        <button type="button" class="mode-btn" onclick="switchBodyMode('edit', 'json')">JSON</button>
+                                    </div>
+                                </div>
+                                <div id="editBodyTableMode">
+                                    <div class="table-responsive">
+                                        <table class="kv-table" id="editBodyTable">
+                                            <thead>
+                                                <tr>
+                                                    <th class="col-key">Key</th>
+                                                    <th class="col-type">类型</th>
+                                                    <th class="col-value">Value</th>
+                                                    <th class="col-action"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody></tbody>
+                                        </table>
+                                    </div>
+                                    <button type="button" class="btn-add-row" onclick="addKvRow('editBodyTable', true)"><i class="bi bi-plus-lg"></i> 添加</button>
+                                </div>
+                                <div id="editBodyJsonMode" style="display: none;">
+                                    <textarea class="form-control font-monospace" id="editDataJson" rows="5" placeholder='{"key": "value"}'></textarea>
+                                </div>
+                                <input type="hidden" id="editData" name="data">
+                            </div>
+                            <div class="col-md-12">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label mb-0">断言配置</label>
+                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditAssertion('editAssertionContainer')">
+                                        <i class="bi bi-plus"></i> 添加断言
+                                    </button>
+                                </div>
+                                <div id="editAssertionContainer">
+                                    <!-- 断言项将通过JavaScript动态添加 -->
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveEditApi()"><i class="bi bi-check-lg me-1"></i>保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 定时任务模态框 -->
+    <div class="modal fade" id="schedulerModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="schedulerModalTitle"><i class="bi bi-clock me-2"></i>添加定时任务</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="schedulerJobId">
+                    <input type="hidden" id="schedulerProjectName">
+                    <input type="hidden" id="schedulerModuleName">
+                    <input type="hidden" id="schedulerCaseIndex">
+                    <div class="mb-3">
+                        <label class="form-label">Cron表达式 <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control font-monospace" id="cronExpression" placeholder="0 * * * *">
+                        <div class="form-text">格式：分 时 日 月 周（如：0 * * * * 每小时执行，0 0 * * * 每天0点执行，*/5 * * * * 每5分钟执行）</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="schedulerSubmitBtn" onclick="submitScheduler()"><i class="bi bi-check-lg me-1"></i>确定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 测试结果模态框 -->
+    <!-- 运行全部测试结果模态框 -->
+    <div class="modal fade" id="runAllResultModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-clipboard-check me-2"></i>批量测试结果</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- 汇总信息 -->
+                    <div class="row g-3 mb-3" id="runAllSummary">
+                        <div class="col-4">
+                            <div class="card text-center h-100">
+                                <div class="card-body py-3">
+                                    <div class="text-muted small mb-1">总计</div>
+                                    <div class="fs-4 fw-bold" id="runAllTotal">0</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="card text-center h-100 border-success">
+                                <div class="card-body py-3">
+                                    <div class="text-muted small mb-1">通过</div>
+                                    <div class="fs-4 fw-bold text-success" id="runAllPassed">0</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="card text-center h-100 border-danger">
+                                <div class="card-body py-3">
+                                    <div class="text-muted small mb-1">失败</div>
+                                    <div class="fs-4 fw-bold text-danger" id="runAllFailed">0</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 进度条 -->
+                    <div class="mb-3">
+                        <div class="progress" style="height: 8px;" id="runAllProgress">
+                            <div class="progress-bar bg-success" id="runAllProgressBar"></div>
+                        </div>
+                    </div>
+                    <!-- 每个接口的结果列表 -->
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width:40px;">#</th>
+                                    <th>接口名称</th>
+                                    <th style="width:70px;">状态码</th>
+                                    <th style="width:80px;">耗时</th>
+                                    <th style="width:70px;">结果</th>
+                                </tr>
+                            </thead>
+                            <tbody id="runAllResultTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="testResultModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-clipboard-data me-2"></i>测试结果</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- 实际请求 - 默认折叠 -->
+                    <div class="border rounded p-0 mb-3" id="testRequestSection">
+                        <div class="d-flex justify-content-between align-items-center px-3 py-2" style="cursor:pointer;" onclick="toggleTestRequest()" role="button" aria-expanded="false">
+                            <span class="fw-bold" style="font-size:0.9rem;"><i class="bi bi-chevron-right me-1 transition" id="testRequestToggleIcon"></i><i class="bi bi-arrow-up-right-square me-1"></i>实际请求</span>
+                            <small class="text-muted">点击展开/折叠</small>
+                        </div>
+                        <div class="px-3 pb-3" id="testRequestContent" style="display:none;">
+                            <div class="row g-2 mb-2">
+                                <div class="col-md-3">
+                                    <div class="card h-100">
+                                        <div class="card-body py-2 px-3">
+                                            <small class="text-muted">请求方法</small>
+                                            <div id="testRequestMethod" class="fw-bold"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-9">
+                                    <div class="card h-100">
+                                        <div class="card-body py-2 px-3">
+                                            <small class="text-muted">请求URL</small>
+                                            <div id="testRequestUrl" class="fw-bold text-break"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <small class="text-muted fw-bold">请求头</small>
+                                    <pre class="bg-light p-2 rounded mt-1 mb-0" style="max-height: 200px; overflow-y: auto;"><code id="testRequestHeaders"></code></pre>
+                                </div>
+                                <div class="col-md-6">
+                                    <small class="text-muted fw-bold">请求体</small>
+                                    <pre class="bg-light p-2 rounded mt-1 mb-0" style="max-height: 200px; overflow-y: auto;"><code id="testRequestBody"></code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h6 class="card-subtitle mb-2 text-muted">状态码</h6>
+                                    <div id="testStatusCode" class="fs-5 fw-bold"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-body">
+                                    <h6 class="card-subtitle mb-2 text-muted">响应耗时</h6>
+                                    <div id="testResponseTime" class="fs-5 fw-bold"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <h6 class="fw-bold mb-2">断言结果</h6>
+                        <div id="testAssertionSummary" class="mb-2"></div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>类型</th>
+                                        <th>字段</th>
+                                        <th>期望值</th>
+                                        <th>实际值</th>
+                                        <th>结果</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="testAssertionTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <h6 class="fw-bold mb-2">响应头</h6>
+                        <pre class="bg-light p-3 rounded"><code id="testHeaders"></code></pre>
+                    </div>
+
+                    <div class="mb-3">
+                        <h6 class="fw-bold mb-2">响应体</h6>
+                        <pre class="bg-light p-3 rounded"><code id="testBody"></code></pre>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast消息 -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div id="messageToast" class="toast" role="alert">
+            <div class="toast-header">
+                <strong class="me-auto" id="toastTitle">提示</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+            </div>
+            <div class="toast-body" id="toastBody"></div>
+        </div>
+    </div>
+
+    <!-- 导入文件输入 -->
+    <input type="file" id="importFileInput" style="display: none;" accept=".json" onchange="handleImportFile(event)">
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/projects.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/statistics.js') }}"></script>
+</body>
+</html>

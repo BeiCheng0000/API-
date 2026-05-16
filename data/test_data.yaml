@@ -1,0 +1,82 @@
+Tablet:
+- case_name: 获取ota升级
+  url: /api/system/version/latestVerInfo/v2?extraIsbn=fkbxzxsos&sn=XWSF439711290748
+  method: GET
+  headers:
+    Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJsb2dpblR5cGUiOiJsb2dpbiIsImxvZ2luSWQiOiJhcHBfc3R1X3VzZXI6MTg5NzU4NDY4MjkyMzc2MTY2NiIsInJuU3RyIjoidHlSQWJtMEQzd2YxcFJxVVp6ZEdjS1poY0s4REhRUDciLCJjbGllbnRpZCI6IjU2MmZmZGM5ZDc2OTYwZWZhODllZDkwZWIzZmNjM2JjIiwidGVuYW50SWQiOiIwMDAwMDAiLCJ1c2VySWQiOjE4OTc1ODQ2ODI5MjM3NjE2NjYsImRlcHRJZCI6MTg4MDE0MjkzNTYxNjgxOTIwMSwiYnJhbmNoSWQiOjE4ODAxNDI5MzU2NzA1ODMyOTcsInN0dWRlbnRJZCI6MTg5NzU4NDY4Mjk2NjI1NzY2NiwiaXNCcmFuY2hBZG1pbiI6ZmFsc2UsImlzQnJhbmNoU3RhZmYiOmZhbHNlLCJpZ25vcmVEYXRhU2NvcGUiOmZhbHNlLCJpc0NvbnN1bHRhbnQiOmZhbHNlLCJpc1NhbGVzQ29uc3VsdGFudCI6ZmFsc2UsImlzRXhlY3V0aXZlU3RvcmVNYW5hZ2VyIjpmYWxzZSwiY29tcGFueWZpbmFuY2UiOmZhbHNlLCJzaG9wQWRtaW4iOmZhbHNlLCJwbGF0Zm9ybUFkbWluaXN0cmF0b3IiOmZhbHNlLCJyb2xlcyI6W119.16AxwAJ9ZeD6Y_zpRUfwpatEhWLUcUlwJvxxK2GXH0U
+    Clientid: 562ffdc9d76960efa89ed90eb3fcc3bc
+    Content-Type: application/json
+  data: {}
+  expected:
+    status_code: 200
+- case_name: 积分记录
+  url: /api/branch/android/integralRecord/queryIntegralRecord
+  method: GET
+  headers:
+    Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJsb2dpblR5cGUiOiJsb2dpbiIsImxvZ2luSWQiOiJhcHBfc3R1X3VzZXI6MTg5NzU4NDY4MjkyMzc2MTY2NiIsInJuU3RyIjoidHlSQWJtMEQzd2YxcFJxVVp6ZEdjS1poY0s4REhRUDciLCJjbGllbnRpZCI6IjU2MmZmZGM5ZDc2OTYwZWZhODllZDkwZWIzZmNjM2JjIiwidGVuYW50SWQiOiIwMDAwMDAiLCJ1c2VySWQiOjE4OTc1ODQ2ODI5MjM3NjE2NjYsImRlcHRJZCI6MTg4MDE0MjkzNTYxNjgxOTIwMSwiYnJhbmNoSWQiOjE4ODAxNDI5MzU2NzA1ODMyOTcsInN0dWRlbnRJZCI6MTg5NzU4NDY4Mjk2NjI1NzY2NiwiaXNCcmFuY2hBZG1pbiI6ZmFsc2UsImlzQnJhbmNoU3RhZmYiOmZhbHNlLCJpZ25vcmVEYXRhU2NvcGUiOmZhbHNlLCJpc0NvbnN1bHRhbnQiOmZhbHNlLCJpc1NhbGVzQ29uc3VsdGFudCI6ZmFsc2UsImlzRXhlY3V0aXZlU3RvcmVNYW5hZ2VyIjpmYWxzZSwiY29tcGFueWZpbmFuY2UiOmZhbHNlLCJzaG9wQWRtaW4iOmZhbHNlLCJwbGF0Zm9ybUFkbWluaXN0cmF0b3IiOmZhbHNlLCJyb2xlcyI6W119.16AxwAJ9ZeD6Y_zpRUfwpatEhWLUcUlwJvxxK2GXH0U
+    Clientid: 562ffdc9d76960efa89ed90eb3fcc3bc
+    Content-Type: application/json
+  data: {}
+  expected:
+    status_code: 200
+    data:
+      code: 200
+- case_name: 获取高中年级
+  url: /api/system/dict/data/type/course_stage
+  method: GET
+  headers:
+    Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJsb2dpblR5cGUiOiJsb2dpbiIsImxvZ2luSWQiOiJhcHBfc3R1X3VzZXI6MTg5NzU4NDY4MjkyMzc2MTY2NiIsInJuU3RyIjoidHlSQWJtMEQzd2YxcFJxVVp6ZEdjS1poY0s4REhRUDciLCJjbGllbnRpZCI6IjU2MmZmZGM5ZDc2OTYwZWZhODllZDkwZWIzZmNjM2JjIiwidGVuYW50SWQiOiIwMDAwMDAiLCJ1c2VySWQiOjE4OTc1ODQ2ODI5MjM3NjE2NjYsImRlcHRJZCI6MTg4MDE0MjkzNTYxNjgxOTIwMSwiYnJhbmNoSWQiOjE4ODAxNDI5MzU2NzA1ODMyOTcsInN0dWRlbnRJZCI6MTg5NzU4NDY4Mjk2NjI1NzY2NiwiaXNCcmFuY2hBZG1pbiI6ZmFsc2UsImlzQnJhbmNoU3RhZmYiOmZhbHNlLCJpZ25vcmVEYXRhU2NvcGUiOmZhbHNlLCJpc0NvbnN1bHRhbnQiOmZhbHNlLCJpc1NhbGVzQ29uc3VsdGFudCI6ZmFsc2UsImlzRXhlY3V0aXZlU3RvcmVNYW5hZ2VyIjpmYWxzZSwiY29tcGFueWZpbmFuY2UiOmZhbHNlLCJzaG9wQWRtaW4iOmZhbHNlLCJwbGF0Zm9ybUFkbWluaXN0cmF0b3IiOmZhbHNlLCJyb2xlcyI6W119.16AxwAJ9ZeD6Y_zpRUfwpatEhWLUcUlwJvxxK2GXH0U
+    Clientid: 562ffdc9d76960efa89ed90eb3fcc3bc
+    Content-Type: application/json
+  data: {}
+  expected:
+    status_code: 200
+    data:
+      code: 200
+学王书房:
+- case_name: 获取ota升级
+  url: /api/system/version/latestVerInfo/v2?extraIsbn=fkbxzxsos&sn=XWSF439711290748
+  method: GET
+  headers: {}
+  data: {}
+  expected: {}
+- case_name: 获取ota升级
+  url: /api/system/version/latestVerInfo/v2?extraIsbn=fkbxzxsos&sn=XWSF439711290748
+  method: GET
+  headers:
+    Content-Type: application/json
+    '1111111111111111111': '11111111111111111111111111'
+  data: {}
+  expected: {}
+- case_name: 获取ota升级
+  url: /api/system/version/latestVerInfo/v2?extraIsbn=fkbxzxsos&sn=XWSF439711290748
+  method: GET
+  headers:
+    Content-Type: application/json
+    '11111111111111': '11111111111111111111111111'
+    '11111111111111111': '11111222222222222222222'
+    '22222222222222': '2222222222222222222'
+  data: {}
+  expected: {}
+- case_name: 获取ota升级
+  url: /api/system/version/latestVerInfo/v2?extraIsbn=fkbxzxsos&sn=XWSF439711290748
+  method: GET
+  headers:
+    Content-Type: application/json
+    '1111111111111111111': '1111111111111111112'
+  data:
+    '11111111111': '11111111111111111'
+  expected:
+    status_code: 200
+    data: {}
+- case_name: 积分记录
+  url: /api/branch/android/integralRecord/queryIntegralRecord
+  method: GET
+  headers:
+    Content-Type: application/json
+    Authorization: Clientid
+    Clientid: 562ffdc9d76960efa89ed90eb3fcc3bc
+  data: {}
+  expected:
+    status_code: 200
+    data: {}

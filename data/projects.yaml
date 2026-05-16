@@ -1,0 +1,44 @@
+学王书房:
+  description: ''
+  modules:
+    登录模块:
+      description: ''
+      apis:
+      - case_name: 获取ota升级
+        url: /api/system/version/latestVerInfo/v2?extraIsbn=fkbxzxsos&sn=XWSF439711290748
+        method: GET
+        headers:
+          Authorization: '{Authorization}'
+          Clientid: '{Clientid}'
+          Content-Type: application/json
+        data: {}
+        expected:
+          status_code: 200
+          data:
+            code: 200
+      - case_name: 积分记录
+        url: /api/branch/android/integralRecord/queryIntegralRecord
+        method: GET
+        headers:
+          Authorization: '{Authorization}'
+          Clientid: '{Clientid}'
+          Content-Type: application/json
+        data: {}
+        expected:
+          status_code: 200
+          data:
+            code: 200
+  envs:
+    正式环境:
+      base_url: https://apipad.xuewangshufang.com
+    测试环境:
+      base_url: https://apipad-test.xuewangshufang.com
+    灰度环境:
+      base_url: https://apipad-pre.xuewangshufang.com
+  current_env: 正式环境
+  variables:
+    Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJsb2dpblR5cGUiOiJsb2dpbiIsImxvZ2luSWQiOiJhcHBfc3R1X3VzZXI6MTg5NzU4NDY4MjkyMzc2MTY2NiIsInJuU3RyIjoiQW9EUjBqY3h3dnFuVXRPUkxsVE9LaDZOdUlzRjNiMzEiLCJjbGllbnRpZCI6IjU2MmZmZGM5ZDc2OTYwZWZhODllZDkwZWIzZmNjM2JjIiwidGVuYW50SWQiOiIwMDAwMDAiLCJ1c2VySWQiOjE4OTc1ODQ2ODI5MjM3NjE2NjYsImRlcHRJZCI6MTg4MDE0MjkzNTYxNjgxOTIwMSwiYnJhbmNoSWQiOjE4ODAxNDI5MzU2NzA1ODMyOTcsInN0dWRlbnRJZCI6MTg5NzU4NDY4Mjk2NjI1NzY2NiwiaXNCcmFuY2hBZG1pbiI6ZmFsc2UsImlzQnJhbmNoU3RhZmYiOmZhbHNlLCJpZ25vcmVEYXRhU2NvcGUiOmZhbHNlLCJpc0NvbnN1bHRhbnQiOmZhbHNlLCJpc1NhbGVzQ29uc3VsdGFudCI6ZmFsc2UsImlzRXhlY3V0aXZlU3RvcmVNYW5hZ2VyIjpmYWxzZSwiY29tcGFueWZpbmFuY2UiOmZhbHNlLCJzaG9wQWRtaW4iOmZhbHNlLCJwbGF0Zm9ybUFkbWluaXN0cmF0b3IiOmZhbHNlLCJyb2xlcyI6W119.zFIaOZ9scTnFKyfvxlrBzm19dTCdV8yRax8_hG5V5oM
+    Clientid: 562ffdc9d76960efa89ed90eb3fcc3bc
+学王书房111:
+  description: ''
+  modules: {}

@@ -1,0 +1,38 @@
+database:
+  mongodb:
+    database: test_db
+    host: localhost
+    password: ''
+    port: 27017
+    user: ''
+  mysql:
+    charset: utf8mb4
+    database: test_db
+    host: localhost
+    password: ''
+    port: 3306
+    user: root
+email:
+  password: ''
+  receivers:
+  - receiver1@example.com
+  - receiver2@example.com
+  sender: test@example.com
+  smtp_port: 587
+  smtp_server: smtp.example.com
+env:
+  current: prod
+log:
+  encoding: utf-8
+  format: '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level>
+    | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>'
+  level: INFO
+  retention: 30 days
+  rotation: 10 MB
+project:
+  description: 基于Python的接口自动化测试平台
+  name: 接口自动化测试平台
+  version: 1.0.0
+report:
+  allure:
+    history: 20
