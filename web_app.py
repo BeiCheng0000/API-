@@ -175,33 +175,91 @@ def get_statistics_data() -> List[Dict[str, Any]]:
     return []
 
 
-def save_statistics_data(data: List[Dict[str, Any]]) -> None:
+def save_statistics_data(data: List[Dict[str, Any]]) -> bool:
     """
-    保存统计数据
+    保存统计数据，带有备份和异常处理机制
 
     Args:
         data: 统计数据列表
+        
+    Returns:
+        bool: 保存是否成功
     """
-    os.makedirs(os.path.dirname(STATISTICS_FILE), exist_ok=True)
-    with open(STATISTICS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    import shutil
+    import time
+    
+    try:
+        # 创建数据目录
+        os.makedirs(os.path.dirname(STATISTICS_FILE), exist_ok=True)
+        
+        # 创建备份文件名（带时间戳）
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        backup_file = f"{STATISTICS_FILE}.bak_{timestamp}"
+        
+        # 如果存在旧数据文件，先创建备份
+        if os.path.exists(STATISTICS_FILE):
+            shutil.copy2(STATISTICS_FILE, backup_file)
+            logger.info(f"已创建统计数据备份: {backup_file}")
+        
+        # 使用临时文件写入数据，确保数据完整性
+        temp_file = f"{STATISTICS_FILE}.tmp"
+        try:
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            
+            # 写入成功后，将临时文件重命名为正式文件
+            shutil.move(temp_file, STATISTICS_FILE)
+            logger.info(f"统计数据已保存: {STATISTICS_FILE}")
+            return True
+            
+        except Exception as write_error:
+            # 写入失败，删除临时文件
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            logger.error(f"写入统计数据失败: {str(write_error)}")
+            
+            # 尝试从备份恢复
+            if os.path.exists(backup_file):
+                try:
+                    shutil.move(backup_file, STATISTICS_FILE)
+                    logger.info("已从备份恢复统计数据")
+                    return True
+                except Exception as recover_error:
+                    logger.error(f"从备份恢复失败: {str(recover_error)}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"保存统计数据时发生异常: {str(e)}")
+        return False
 
 
-def add_statistics_record(record: Dict[str, Any]) -> None:
+def add_statistics_record(record: Dict[str, Any]) -> bool:
     """
-    添加一条统计记录
+    添加一条统计记录，带有保存状态检查
 
     Args:
         record: 统计记录
+        
+    Returns:
+        bool: 添加并保存是否成功
     """
-    data = get_statistics_data()
-    record['id'] = len(data) + 1
-    record['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    data.append(record)
-    # 最多保留10000条记录
-    if len(data) > 10000:
-        data = data[-10000:]
-    save_statistics_data(data)
+    try:
+        data = get_statistics_data()
+        record['id'] = len(data) + 1
+        record['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        data.append(record)
+        # 最多保留10000条记录
+        if len(data) > 10000:
+            data = data[-10000:]
+        
+        saved = save_statistics_data(data)
+        if not saved:
+            logger.error("添加统计记录失败：数据保存失败")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"添加统计记录时发生异常: {str(e)}")
+        return False
 
 
 def get_test_data() -> Dict[str, Any]:
@@ -513,9 +571,13 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                 "response_headers": response.get("headers", {}),
                 "response_body": response.get("data"),
             }
-            add_statistics_record(stat_record)
+            # 检查统计数据是否成功记录
+            stat_saved = add_statistics_record(stat_record)
+            if not stat_saved:
+                logger.error("记录统计数据失败：无法保存到文件")
+                # 可以在这里添加额外的错误处理逻辑，如重试机制
         except Exception as stat_err:
-            logger.error(f"记录统计数据失败: {stat_err}")
+            logger.error(f"记录统计数据时发生异常: {stat_err}")
 
         # 返回测试结果
         return {
@@ -1447,9 +1509,29 @@ def statistics_list():
 # 路由：清空统计数据
 @app.route('/statistics/clear', methods=['POST'])
 def statistics_clear():
-    """清空统计数据"""
-    save_statistics_data([])
-    return jsonify({'success': True, 'message': '统计数据已清空'})
+    """清空统计数据，带有保存状态检查"""
+    try:
+        # 创建备份文件名（带时间戳）
+        import time
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        backup_file = f"{STATISTICS_FILE}.bak_clear_{timestamp}"
+        
+        # 如果存在旧数据文件，先创建备份
+        if os.path.exists(STATISTICS_FILE):
+            import shutil
+            shutil.copy2(STATISTICS_FILE, backup_file)
+            logger.info(f"清空前已创建数据备份: {backup_file}")
+        
+        # 尝试清空数据
+        saved = save_statistics_data([])
+        if saved:
+            return jsonify({'success': True, 'message': '统计数据已清空', 'backup_file': backup_file})
+        else:
+            logger.error("清空统计数据失败：数据保存失败")
+            return jsonify({'success': False, 'message': '清空统计数据失败'}), 500
+    except Exception as e:
+        logger.error(f"清空统计数据时发生异常: {str(e)}")
+        return jsonify({'success': False, 'message': f'清空统计数据失败: {str(e)}'}), 500
 
 
 # 路由：导出统计数据
@@ -1951,6 +2033,98 @@ def test_execute(project_name, module_name, case_index):
         except Exception:
             pass
         return jsonify({"error": f"{e}\n{tb_str}", "success": False})
+
+
+# 路由：从备份恢复统计数据
+@app.route('/statistics/restore', methods=['POST'])
+def statistics_restore():
+    """从备份恢复统计数据"""
+    try:
+        backup_file = request.form.get('backup_file')
+        if not backup_file:
+            return jsonify({'success': False, 'message': '未指定备份文件'}), 400
+            
+        if not os.path.exists(backup_file):
+            return jsonify({'success': False, 'message': '备份文件不存在'}), 404
+            
+        # 读取备份数据
+        try:
+            with open(backup_file, 'r', encoding='utf-8') as f:
+                backup_data = json.load(f)
+        except Exception as e:
+            logger.error(f"读取备份文件失败: {str(e)}")
+            return jsonify({'success': False, 'message': f'读取备份文件失败: {str(e)}'}), 500
+            
+        # 尝试恢复数据
+        saved = save_statistics_data(backup_data)
+        if saved:
+            return jsonify({'success': True, 'message': '统计数据已从备份恢复'})
+        else:
+            logger.error("恢复统计数据失败：数据保存失败")
+            return jsonify({'success': False, 'message': '恢复统计数据失败'}), 500
+    except Exception as e:
+        logger.error(f"恢复统计数据时发生异常: {str(e)}")
+        return jsonify({'success': False, 'message': f'恢复统计数据失败: {str(e)}'}), 500
+
+
+# 路由：获取所有备份文件列表
+@app.route('/statistics/backup/list', methods=['GET'])
+def statistics_backup_list():
+    """获取所有备份文件列表"""
+    try:
+        backup_dir = os.path.dirname(STATISTICS_FILE)
+        backup_files = []
+        
+        # 查找所有备份文件
+        for filename in os.listdir(backup_dir):
+            if filename.startswith(os.path.basename(STATISTICS_FILE) + ".bak_"):
+                filepath = os.path.join(backup_dir, filename)
+                file_stat = os.stat(filepath)
+                backup_files.append({
+                    'filename': filename,
+                    'path': filepath,
+                    'size': file_stat.st_size,
+                    'created': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(file_stat.st_ctime))
+                })
+        
+        # 按创建时间降序排序
+        backup_files.sort(key=lambda x: x['created'], reverse=True)
+        
+        return jsonify({
+            'success': True, 
+            'backup_files': backup_files
+        })
+    except Exception as e:
+        logger.error(f"获取备份文件列表失败: {str(e)}")
+        return jsonify({'success': False, 'message': f'获取备份文件列表失败: {str(e)}'}), 500
+
+
+# 路由：下载备份文件
+@app.route('/statistics/download')
+def download_backup():
+    """下载备份文件"""
+    try:
+        file_path = request.args.get('file')
+        if not file_path:
+            return jsonify({'success': False, 'message': '未指定文件路径'}), 400
+            
+        if not os.path.exists(file_path):
+            return jsonify({'success': False, 'message': '文件不存在'}), 404
+            
+        # 安全检查，确保只允许下载备份文件
+        if not file_path.startswith(os.path.dirname(STATISTICS_FILE)) or \
+           not os.path.basename(file_path).startswith(os.path.basename(STATISTICS_FILE) + ".bak_"):
+            return jsonify({'success': False, 'message': '非法文件路径'}), 403
+            
+        # 获取文件名
+        filename = os.path.basename(file_path)
+        
+        # 设置响应头，触发下载
+        from flask import send_file
+        return send_file(file_path, as_attachment=True, download_name=filename)
+    except Exception as e:
+        logger.error(f"下载备份文件失败: {str(e)}")
+        return jsonify({'success': False, 'message': f'下载失败: {str(e)}'}), 500
 
 
 # 启动时恢复持久化的定时任务（必须在 scheduled_test_job 函数定义之后）
