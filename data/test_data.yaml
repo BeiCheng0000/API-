@@ -80,3 +80,13 @@ Tablet:
   expected:
     status_code: 200
     data: {}
+- case_name: 登录
+  url: /api/auth/login
+  method: GET
+  headers:
+    Content-Type: application/json
+    encrypt-key: CMr7eTB+/tSD6q90mDOQgSTIyzoKuQljtEC4dO809JRRNHvqMea/bUNi2c+tef/eDb2L9eWWqbX8AMvsWBfgNQ==
+  data: {}
+  expected:
+    status_code: 200
+    data: {}

@@ -28,6 +28,20 @@
           status_code: 200
           data:
             code: 200
+      - case_name: 登录
+        url: /api/auth/login
+        method: POST
+        headers:
+          Content-Type: application/json
+          encrypt-key: CMr7eTB+/tSD6q90mDOQgSTIyzoKuQljtEC4dO809JRRNHvqMea/bUNi2c+tef/eDb2L9eWWqbX8AMvsWBfgNQ==
+        data: ZJgla5FQFv/TRbuBqXGp21x0ajDcvVsX6wLWpUd+qg0LOgzengpIvFmG85+PqKTzYJq6BVydpYUyPtClkwjCnOM3Uoj5NwB170KjpM2A6YgkasQ8FSJaOZz7qljAO+C7UTSq7Oc4M7ieYcvp29qXiqF9/Y4AEwMdaJ007rWcgprEkG7P40xAfIEK0XhsLVi1
+        expected:
+          status_code: 200
+          data: {}
+        extractions:
+          access_token:
+            path: data.access_token
+            default: null
   envs:
     正式环境:
       base_url: https://apipad.xuewangshufang.com
@@ -37,8 +51,9 @@
       base_url: https://apipad-pre.xuewangshufang.com
   current_env: 正式环境
   variables:
-    Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJsb2dpblR5cGUiOiJsb2dpbiIsImxvZ2luSWQiOiJhcHBfc3R1X3VzZXI6MTg5NzU4NDY4MjkyMzc2MTY2NiIsInJuU3RyIjoiQW9EUjBqY3h3dnFuVXRPUkxsVE9LaDZOdUlzRjNiMzEiLCJjbGllbnRpZCI6IjU2MmZmZGM5ZDc2OTYwZWZhODllZDkwZWIzZmNjM2JjIiwidGVuYW50SWQiOiIwMDAwMDAiLCJ1c2VySWQiOjE4OTc1ODQ2ODI5MjM3NjE2NjYsImRlcHRJZCI6MTg4MDE0MjkzNTYxNjgxOTIwMSwiYnJhbmNoSWQiOjE4ODAxNDI5MzU2NzA1ODMyOTcsInN0dWRlbnRJZCI6MTg5NzU4NDY4Mjk2NjI1NzY2NiwiaXNCcmFuY2hBZG1pbiI6ZmFsc2UsImlzQnJhbmNoU3RhZmYiOmZhbHNlLCJpZ25vcmVEYXRhU2NvcGUiOmZhbHNlLCJpc0NvbnN1bHRhbnQiOmZhbHNlLCJpc1NhbGVzQ29uc3VsdGFudCI6ZmFsc2UsImlzRXhlY3V0aXZlU3RvcmVNYW5hZ2VyIjpmYWxzZSwiY29tcGFueWZpbmFuY2UiOmZhbHNlLCJzaG9wQWRtaW4iOmZhbHNlLCJwbGF0Zm9ybUFkbWluaXN0cmF0b3IiOmZhbHNlLCJyb2xlcyI6W119.zFIaOZ9scTnFKyfvxlrBzm19dTCdV8yRax8_hG5V5oM
+    Authorization: Bearer {access_token}
     Clientid: 562ffdc9d76960efa89ed90eb3fcc3bc
+    access_token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJsb2dpblR5cGUiOiJsb2dpbiIsImxvZ2luSWQiOiJzdGFmZl91c2VyOjE5MzU4ODQ0NDM2MzUyMjg2NzQiLCJyblN0ciI6IkZtTGdLUHF6ZURXVU1uZWFWYUgycjNZekJZM1BYYXZTIiwiY2xpZW50aWQiOiI1NjJmZmRjOWQ3Njk2MGVmYTg5ZWQ5MGViM2ZjYzNiYyIsInRlbmFudElkIjoiMDAwMDAwIiwidXNlcklkIjoxOTM1ODg0NDQzNjM1MjI4Njc0LCJkZXB0SWQiOjE4ODAxNDI5MzU2MTY4MTkyMDEsImJyYW5jaElkIjoxODgwMTQyOTM1NjcwNTgzMjk3LCJzdHVkZW50SWQiOjIwMTM1Nzk5MzI4MjU3NDc0NTcsImlzQnJhbmNoQWRtaW4iOmZhbHNlLCJpc0JyYW5jaFN0YWZmIjp0cnVlLCJpZ25vcmVEYXRhU2NvcGUiOmZhbHNlLCJicmFuY2hTdGFmZklkIjoxOTM1ODg0NDQzNzk4NzAwMDMzLCJpc0NvbnN1bHRhbnQiOmZhbHNlLCJpc1NhbGVzQ29uc3VsdGFudCI6ZmFsc2UsImlzRXhlY3V0aXZlU3RvcmVNYW5hZ2VyIjp0cnVlLCJjb21wYW55ZmluYW5jZSI6ZmFsc2UsInNob3BBZG1pbiI6ZmFsc2UsInBsYXRmb3JtQWRtaW5pc3RyYXRvciI6ZmFsc2UsInJvbGVzIjpbeyJyb2xlSWQiOjMsInJvbGVOYW1lIjoiY3JtLeW4guWcuuS6uuWRmC3ph43opoEiLCJyb2xlS2V5IjoiUFVCTElDX1NUQUZGIiwiZGF0YVNjb3BlIjoiMyJ9LHsicm9sZUlkIjoxNzYyNjk3NTgyOTA5NTEzNzMwLCJyb2xlTmFtZSI6IuS8muWRmOmhvumXriIsInJvbGVLZXkiOiJtZW1iZXJDb25zdWx0YW50IiwiZGF0YVNjb3BlIjoiNSJ9LHsicm9sZUlkIjoxNzYyNjk3ODE0NDIyNTExNjE3LCJyb2xlTmFtZSI6IuaJp-ihjOW6l-mVvyIsInJvbGVLZXkiOiJleGVjdXRpdmVTdG9yZU1hbmFnZXIiLCJkYXRhU2NvcGUiOiI0In1dfQ.uQfmGAe-qrTfDjsoTCNDX1Un9zHzNWHCJnJe0HUcz7Q
 学王书房111:
   description: ''
   modules: {}

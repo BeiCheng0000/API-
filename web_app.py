@@ -177,56 +177,26 @@ def get_statistics_data() -> List[Dict[str, Any]]:
 
 def save_statistics_data(data: List[Dict[str, Any]]) -> bool:
     """
-    保存统计数据，带有备份和异常处理机制
+    保存统计数据
 
     Args:
         data: 统计数据列表
-        
+
     Returns:
         bool: 保存是否成功
     """
-    import shutil
-    import time
-    
     try:
-        # 创建数据目录
         os.makedirs(os.path.dirname(STATISTICS_FILE), exist_ok=True)
-        
-        # 创建备份文件名（带时间戳）
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        backup_file = f"{STATISTICS_FILE}.bak_{timestamp}"
-        
-        # 如果存在旧数据文件，先创建备份
-        if os.path.exists(STATISTICS_FILE):
-            shutil.copy2(STATISTICS_FILE, backup_file)
-            logger.info(f"已创建统计数据备份: {backup_file}")
-        
-        # 使用临时文件写入数据，确保数据完整性
-        temp_file = f"{STATISTICS_FILE}.tmp"
-        try:
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            
-            # 写入成功后，将临时文件重命名为正式文件
-            shutil.move(temp_file, STATISTICS_FILE)
-            logger.info(f"统计数据已保存: {STATISTICS_FILE}")
-            return True
-            
-        except Exception as write_error:
-            # 写入失败，删除临时文件
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-            logger.error(f"写入统计数据失败: {str(write_error)}")
-            
-            # 尝试从备份恢复
-            if os.path.exists(backup_file):
-                try:
-                    shutil.move(backup_file, STATISTICS_FILE)
-                    logger.info("已从备份恢复统计数据")
-                    return True
-                except Exception as recover_error:
-                    logger.error(f"从备份恢复失败: {str(recover_error)}")
-            return False
+
+        with open(STATISTICS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"统计数据已保存: {STATISTICS_FILE}")
+        return True
+
+    except Exception as e:
+        logger.error(f"保存统计数据时发生异常: {str(e)}")
+        return False
             
     except Exception as e:
         logger.error(f"保存统计数据时发生异常: {str(e)}")
@@ -370,7 +340,8 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
             try:
                 data = json.loads(data)
             except (json.JSONDecodeError, TypeError):
-                data = {}
+                # 纯文本请求体，保留原始字符串
+                pass
         if isinstance(expected, str):
             try:
                 expected = json.loads(expected)
@@ -378,7 +349,7 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                 expected = {}
         if not isinstance(headers, dict):
             headers = {}
-        if not isinstance(data, dict):
+        if not isinstance(data, (dict, str)):
             data = {}
         if not isinstance(expected, dict):
             expected = {}
@@ -410,9 +381,12 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
         # 处理数据中的动态变量
         if "${timestamp}" in str(data) or "${timestamp}" in str(headers):
             timestamp = int(time.time())
-            for key, value in data.items():
-                if isinstance(value, str) and "${timestamp}" in value:
-                    data[key] = value.replace("${timestamp}", str(timestamp))
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    if isinstance(value, str) and "${timestamp}" in value:
+                        data[key] = value.replace("${timestamp}", str(timestamp))
+            elif isinstance(data, str) and "${timestamp}" in data:
+                data = data.replace("${timestamp}", str(timestamp))
             for key, value in headers.items():
                 if isinstance(value, str) and "${timestamp}" in value:
                     headers[key] = value.replace("${timestamp}", str(timestamp))
@@ -439,12 +413,18 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
         # 记录发送请求的时间（预热之后，确保连接已建立）
         start_time = time_module.perf_counter()
 
+        # 根据data类型选择发送方式：字典用json，字符串用data（纯文本请求体）
+        if isinstance(data, str):
+            request_kwargs = {'data': data, 'headers': merged_headers, 'timeout': timeout}
+        else:
+            request_kwargs = {'json': data, 'headers': merged_headers, 'timeout': timeout}
+
         if method == "GET":
             raw_response = _http_session.request("GET", full_url, params=data, headers=merged_headers, timeout=timeout)
         elif method == "POST":
-            raw_response = _http_session.request("POST", full_url, json=data, headers=merged_headers, timeout=timeout)
+            raw_response = _http_session.request("POST", full_url, **request_kwargs)
         elif method == "PUT":
-            raw_response = _http_session.request("PUT", full_url, json=data, headers=merged_headers, timeout=timeout)
+            raw_response = _http_session.request("PUT", full_url, **request_kwargs)
         elif method == "DELETE":
             raw_response = _http_session.request("DELETE", full_url, headers=merged_headers, timeout=timeout)
         else:
@@ -544,6 +524,75 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                         "actual": "字段不存在",
                         "passed": False
                     })
+
+        # 执行变量提取
+        extraction_results = []
+        if "extractions" in api_data:
+            extractions = api_data["extractions"]
+            if isinstance(extractions, dict):
+                # 获取项目变量
+                projects_data = get_projects()
+                project_name = api_data.get("project", "")
+                project_variables = {}
+                
+                if project_name and project_name in projects_data:
+                    project_variables = projects_data[project_name].get("variables", {})
+                
+                # 处理每个提取项
+                for var_name, extraction_config in extractions.items():
+                    if isinstance(extraction_config, dict) and "path" in extraction_config:
+                        path = extraction_config["path"]
+                        default_value = extraction_config.get("default", None)
+                        
+                        # 尝试从响应中提取值
+                        extracted_value = None
+                        try:
+                            # 支持简单路径如 "data.user.id"
+                            if path:
+                                parts = path.split(".")
+                                current = response.get("data", {})
+                                
+                                # 确保current是字典类型
+                                if isinstance(current, str):
+                                    try:
+                                        current = json.loads(current)
+                                    except (json.JSONDecodeError, TypeError):
+                                        current = {}
+                                
+                                # 遍历路径
+                                for part in parts:
+                                    if isinstance(current, dict) and part in current:
+                                        current = current[part]
+                                    else:
+                                        current = None
+                                        break
+                                
+                                extracted_value = current if current is not None else default_value
+                        except Exception as e:
+                            logger.warning(f"提取变量 {var_name} 时出错: {e}")
+                            extracted_value = default_value
+                        
+                        # 更新项目变量
+                        if extracted_value is not None:
+                            project_variables[var_name] = str(extracted_value)
+                            extraction_results.append({
+                                "var_name": var_name,
+                                "path": path,
+                                "value": extracted_value,
+                                "success": True
+                            })
+                        else:
+                            extraction_results.append({
+                                "var_name": var_name,
+                                "path": path,
+                                "value": None,
+                                "success": False
+                            })
+                
+                # 保存项目变量
+                if project_name and project_name in projects_data:
+                    projects_data[project_name]["variables"] = project_variables
+                    save_projects(projects_data)
 
         # 构建显示用的完整URL（对于GET请求，将params拼接到URL中显示）
         display_url = full_url
@@ -1044,6 +1093,7 @@ def apis_update(project_name, module_name, api_index):
     headers = request.form.get('headers', '{}')
     data = request.form.get('data', '{}')
     expected = request.form.get('expected', '{}')
+    extractions = request.form.get('extractions', '{}')
 
     if not all([case_name, url, method]):
         return jsonify({'success': False, 'error': '请填写所有必填字段'})
@@ -1058,10 +1108,24 @@ def apis_update(project_name, module_name, api_index):
 
     try:
         headers_dict = json.loads(headers) if headers else {}
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'请求头JSON格式错误: {str(e)}'})
+
+    try:
         data_dict = json.loads(data) if data else {}
+    except Exception:
+        # 如果不是有效JSON，将原始文本作为字符串值保存
+        data_dict = data if data else {}
+
+    try:
         expected_dict = json.loads(expected) if expected else {}
     except Exception as e:
-        return jsonify({'success': False, 'error': f'JSON格式错误: {str(e)}'})
+        return jsonify({'success': False, 'error': f'断言JSON格式错误: {str(e)}'})
+
+    try:
+        extractions_dict = json.loads(extractions) if extractions else {}
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'提取配置JSON格式错误: {str(e)}'})
 
     apis = projects_data[project_name]['modules'][module_name]['apis']
     if 0 <= api_index < len(apis):
@@ -1071,7 +1135,8 @@ def apis_update(project_name, module_name, api_index):
             'method': method,
             'headers': headers_dict,
             'data': data_dict,
-            'expected': expected_dict
+            'expected': expected_dict,
+            'extractions': extractions_dict
         }
 
         if save_projects(projects_data):
@@ -1117,7 +1182,11 @@ def api_add():
     try:
         # 解析JSON数据
         headers_dict = json.loads(headers) if headers else {}
-        data_dict = json.loads(data) if data else {}
+        try:
+            data_dict = json.loads(data) if data else {}
+        except Exception:
+            # 如果不是有效JSON，将原始文本作为字符串值保存
+            data_dict = data if data else {}
         expected_dict = json.loads(expected) if expected else {}
 
         # 获取测试数据
@@ -1397,6 +1466,28 @@ def scheduler_delete(job_id):
     except Exception as e:
         logger.error(f"删除定时任务失败: {e}")
         return jsonify({'success': False, 'error': f'删除定时任务失败: {str(e)}'})
+
+
+# 路由：获取统计页面的项目列表
+@app.route('/statistics/projects')
+def statistics_projects():
+    """获取统计数据中所有项目列表"""
+    data = get_statistics_data()
+    projects = sorted(set(r.get('project', '') for r in data if r.get('project')))
+    return jsonify({'success': True, 'projects': projects})
+
+
+# 路由：获取统计页面的模块列表
+@app.route('/statistics/modules')
+def statistics_modules():
+    """获取指定项目的模块列表"""
+    project = request.args.get('project', '')
+    data = get_statistics_data()
+    if project:
+        modules = sorted(set(r.get('module', '') for r in data if r.get('project') == project and r.get('module')))
+    else:
+        modules = sorted(set(r.get('module', '') for r in data if r.get('module')))
+    return jsonify({'success': True, 'modules': modules})
 
 
 # 路由：获取统计数据列表
@@ -1689,14 +1780,22 @@ def statistics_export():
 
 
 # 路由：获取单条统计详情
+@app.route('/statistics/detail')
 @app.route('/statistics/detail/<int:record_id>')
-def statistics_detail(record_id):
+def statistics_detail(record_id=None):
     """获取单条统计详情"""
+    # 支持路径参数和查询参数两种方式
+    if record_id is None:
+        try:
+            record_id = int(request.args.get('id', 0))
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'error': '无效的ID参数'}), 400
+
     data = get_statistics_data()
     for r in data:
         if r.get('id') == record_id:
-            return jsonify(r)
-    return jsonify({'error': '记录不存在'}), 404
+            return jsonify({'success': True, 'detail': r})
+    return jsonify({'success': False, 'error': '记录不存在'}), 404
 
 
 # 路由：获取项目的环境配置

@@ -14,5 +14,13 @@
     "module_name": "登录模块",
     "case_index": 1,
     "cron_expression": "0 * * * *"
+  },
+  {
+    "id": "学王书房_登录模块_2_1779074241",
+    "name": "学王书房/登录模块 - 登录",
+    "project_name": "学王书房",
+    "module_name": "登录模块",
+    "case_index": 2,
+    "cron_expression": "0 * * * *"
   }
 ]

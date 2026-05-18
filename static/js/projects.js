@@ -644,6 +644,9 @@ function showAddApiModal(projectName, moduleName = '') {
 
     // 初始化断言配置，默认添加状态码200断言
     setEditAssertions({status_code: 200, data: {}}, 'addAssertionContainer');
+    
+    // 初始化提取配置
+    setEditExtractions({}, 'addExtractionContainer');
 
     modal.show();
 }
@@ -684,6 +687,7 @@ function addApi() {
     formData.append('headers', headers);
     formData.append('data', data);
     formData.append('expected', JSON.stringify(getEditAssertions('addAssertionContainer')));
+    formData.append('extractions', JSON.stringify(getEditExtractions('addExtractionContainer')));
 
     fetch(`/projects/${projectName}/modules/${moduleName}/apis/add`, {
         method: 'POST',
@@ -1338,10 +1342,16 @@ function editApi(projectName, moduleName, apiIndex) {
             // 使用统一接口设置请求头和请求体
             setHeadersData('edit', apiData.headers || {});
             setBodyData('edit', apiData.data || {});
-            switchBodyMode('edit', 'table');
+            // 只有当data是字典时才切换到表格模式，字符串时setBodyData会自动切换到JSON模式
+            if (typeof apiData.data !== 'string') {
+                switchBodyMode('edit', 'table');
+            }
 
             // 设置断言
             setEditAssertions(apiData.expected || {}, 'editAssertionContainer');
+            
+            // 设置提取配置
+            setEditExtractions(apiData.extractions || {}, 'editExtractionContainer');
 
             // 显示编辑模态框
             const editModal = new bootstrap.Modal(document.getElementById('editApiModal'));
@@ -1692,12 +1702,24 @@ function debugApi(projectName, moduleName, caseIndex) {
 
     try {
         const headersStr = getHeadersData('debug');
-        const dataStr = getBodyData('debug');
         if (headersStr) headers = JSON.parse(headersStr);
-        if (dataStr) data = JSON.parse(dataStr);
     } catch (e) {
-        showToast('错误', 'JSON格式错误: ' + e.message, 'danger');
+        showToast('错误', '请求头JSON格式错误: ' + e.message, 'danger');
         return;
+    }
+
+    try {
+        const dataStr = getBodyData('debug');
+        if (dataStr) {
+            try {
+                data = JSON.parse(dataStr);
+            } catch (e) {
+                // 如果不是有效JSON，将原始文本作为字符串值
+                data = dataStr;
+            }
+        }
+    } catch (e) {
+        // 忽略获取数据时的错误
     }
 
     // 获取断言
@@ -2160,10 +2182,23 @@ function setBodyData(prefix, data) {
         jsonTextareaId = prefix + 'DataJson';
     }
 
-    setKvTableData(tableId, true, data);
     const jsonTextarea = document.getElementById(jsonTextareaId);
-    if (jsonTextarea) {
-        jsonTextarea.value = JSON.stringify(data, null, 2);
+
+    // 如果data是字符串（纯文本请求体），直接设置到JSON文本框并切换到JSON模式
+    if (typeof data === 'string') {
+        // 清空表格
+        setKvTableData(tableId, true, {});
+        if (jsonTextarea) {
+            jsonTextarea.value = data;
+        }
+        // 切换到JSON模式
+        switchBodyMode(prefix, 'json');
+    } else {
+        // 字典类型，正常填充表格和JSON文本框
+        setKvTableData(tableId, true, data);
+        if (jsonTextarea) {
+            jsonTextarea.value = JSON.stringify(data, null, 2);
+        }
     }
 }
 

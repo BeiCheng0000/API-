@@ -630,12 +630,24 @@ function debugApi(projectName, moduleName, caseIndex) {
 
     try {
         const headersStr = getHeadersData('debug');
-        const dataStr = getBodyData('debug');
         if (headersStr) headers = JSON.parse(headersStr);
-        if (dataStr) data = JSON.parse(dataStr);
     } catch (e) {
-        showToast('错误', 'JSON格式错误: ' + e.message, 'danger');
+        showToast('错误', '请求头JSON格式错误: ' + e.message, 'danger');
         return;
+    }
+
+    try {
+        const dataStr = getBodyData('debug');
+        if (dataStr) {
+            try {
+                data = JSON.parse(dataStr);
+            } catch (e) {
+                // 如果不是有效JSON，将原始文本作为字符串值
+                data = dataStr;
+            }
+        }
+    } catch (e) {
+        // 忽略获取数据时的错误
     }
 
     // 获取断言
@@ -796,12 +808,22 @@ function addApi() {
         if (addApiHeaders) {
             headers = JSON.parse(addApiHeaders);
         }
+    } catch (e) {
+        showToast('错误', '请求头JSON格式错误: ' + e.message, 'danger');
+        return;
+    }
+
+    try {
         if (addApiData) {
-            data = JSON.parse(addApiData);
+            try {
+                data = JSON.parse(addApiData);
+            } catch (e) {
+                // 如果不是有效JSON，将原始文本作为字符串值
+                data = addApiData;
+            }
         }
     } catch (e) {
-        showToast('错误', 'JSON格式错误: ' + e.message, 'danger');
-        return;
+        // 忽略获取数据时的错误
     }
 
     // 获取断言数据
@@ -1264,6 +1286,9 @@ function saveEditApi() {
     // 获取断言
     const expected = getEditAssertions();
     
+    // 获取提取配置
+    const extractions = getEditExtractions();
+    
     // 创建表单数据
     const formData = new FormData();
     formData.append('case_name', caseName);
@@ -1272,6 +1297,7 @@ function saveEditApi() {
     formData.append('headers', headers);
     formData.append('data', data);
     formData.append('expected', JSON.stringify(expected));
+    formData.append('extractions', JSON.stringify(extractions));
     
     // 发送请求到projects路由
     fetch(`/projects/${projectName}/modules/${moduleName}/apis/update/${apiIndex}`, {
@@ -1343,6 +1369,106 @@ function removeEditAssertion(button) {
     if (assertionItem) {
         assertionItem.remove();
     }
+}
+
+/**
+ * 添加编辑提取项
+ * @param {string} containerId - 提取容器ID
+ * @param {string} varName - 变量名
+ * @param {string} path - 提取路径
+ * @param {string} defaultValue - 默认值
+ */
+function addEditExtraction(containerId = 'editExtractionContainer', varName = '', path = '', defaultValue = '') {
+    const extractionContainer = document.getElementById(containerId);
+    const extractionCount = extractionContainer.children.length;
+
+    if (extractionCount >= 10) {
+        showToast('警告', '最多只能添加10个提取项', 'warning');
+        return;
+    }
+
+    const extractionItem = document.createElement('div');
+    extractionItem.className = 'row mb-2 extraction-item';
+    extractionItem.innerHTML = `
+        <div class="col-md-4">
+            <input type="text" class="form-control form-control-sm extraction-varname" placeholder="变量名" value="${varName}">
+        </div>
+        <div class="col-md-4">
+            <input type="text" class="form-control form-control-sm extraction-path" placeholder="提取路径 (如: data.user.id)" value="${path}">
+        </div>
+        <div class="col-md-3">
+            <input type="text" class="form-control form-control-sm extraction-default" placeholder="默认值 (可选)" value="${defaultValue}">
+        </div>
+        <div class="col-md-1">
+            <button type="button" class="btn btn-sm btn-outline-danger w-100" onclick="removeEditExtraction(this)">
+                <i class="bi bi-trash"></i>
+            </button>
+        </div>
+    `;
+
+    extractionContainer.appendChild(extractionItem);
+}
+
+/**
+ * 移除编辑提取项
+ * @param {HTMLElement} button - 删除按钮元素
+ */
+function removeEditExtraction(button) {
+    const extractionItem = button.closest('.extraction-item');
+    if (extractionItem) {
+        extractionItem.remove();
+    }
+}
+
+/**
+ * 设置编辑提取项
+ * @param {Object} extractions - 提取对象
+ * @param {string} containerId - 提取容器ID
+ */
+function setEditExtractions(extractions, containerId = 'editExtractionContainer') {
+    const extractionContainer = document.getElementById(containerId);
+    if (!extractionContainer) return;
+    
+    // 清空现有提取项
+    extractionContainer.innerHTML = '';
+    
+    // 添加每个提取项
+    for (const [varName, config] of Object.entries(extractions)) {
+        if (config && typeof config === 'object' && 'path' in config) {
+            addEditExtraction(
+                containerId,
+                varName,
+                config.path || '',
+                config.default || ''
+            );
+        }
+    }
+}
+
+/**
+ * 获取所有编辑提取项
+ * @param {string} containerId - 提取容器ID
+ * @returns {Object} 提取对象
+ */
+function getEditExtractions(containerId = 'editExtractionContainer') {
+    const extractionContainer = document.getElementById(containerId);
+    const extractionItems = extractionContainer.querySelectorAll('.extraction-item');
+    const extractions = {};
+
+    extractionItems.forEach(item => {
+        const varName = item.querySelector('.extraction-varname').value.trim();
+        const path = item.querySelector('.extraction-path').value.trim();
+        const defaultValue = item.querySelector('.extraction-default').value;
+
+        if (varName && path) {
+            extractions[varName] = {
+                path: path,
+                default: defaultValue || null
+            };
+        }
+    });
+
+    return extractions;
 }
 
 /**
