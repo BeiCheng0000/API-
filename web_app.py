@@ -79,19 +79,19 @@ try:
 
     # 启动时预加载统计数据
     try:
-        logger.info("=" * 50)
-        logger.info("启动预加载：开始从数据库获取统计数据...")
+        # logger.info("=" * 50)
+        # logger.info("启动预加载：开始从数据库获取统计数据...")
         db_handler._ensure_connection()
         preload_count = db_handler.query("SELECT COUNT(*) as cnt FROM test_statistics")
         total_count = preload_count[0]['cnt'] if preload_count else 0
-        logger.info(f"启动预加载：数据库中共有 {total_count} 条统计数据")
+        # logger.info(f"启动预加载：数据库中共有 {total_count} 条统计数据")
         if total_count > 0:
             sample_data = db_handler.query("SELECT id, project, module, case_name, method, status_code FROM test_statistics ORDER BY id DESC LIMIT 5")
-            logger.info(f"启动预加载：最近5条数据预览:")
-            for row in sample_data:
-                logger.info(f"  - ID:{row.get('id')} | 项目:{row.get('project','')} | 模块:{row.get('module','')} | 用例:{row.get('case_name','')} | 方法:{row.get('method','')} | 状态码:{row.get('status_code','')}")
-        logger.info("启动预加载：统计数据加载完成")
-        logger.info("=" * 50)
+            # logger.info(f"启动预加载：最近5条数据预览:")
+            # for row in sample_data:
+            #     logger.info(f"  - ID:{row.get('id')} | 项目:{row.get('project','')} | 模块:{row.get('module','')} | 用例:{row.get('case_name','')} | 方法:{row.get('method','')} | 状态码:{row.get('status_code','')}")
+        # logger.info("启动预加载：统计数据加载完成")
+        # logger.info("=" * 50)
     except Exception as preload_err:
         logger.warning(f"启动预加载统计数据失败: {preload_err}")
 
@@ -1107,7 +1107,7 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
     proj_env_name = ''
     if project_name in projects_data_for_env:
         proj_env_name = projects_data_for_env[project_name].get('current_env', '')
-    logger.info(f"执行定时测试: {project_name}/{module_name}[{api_id}] (当前环境: {proj_env_name or '默认'})")
+    # logger.info(f"执行定时测试: {project_name}/{module_name}[{api_id}] (当前环境: {proj_env_name or '默认'})")
 
     # 从数据库中获取接口数据
     api_data = None
@@ -1145,7 +1145,7 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
 
     if api_data:
         result = execute_api_test(api_data)
-        logger.info(f"定时测试结果: {project_name}/{module_name}[{api_id}] - {json.dumps(result, ensure_ascii=False)}")
+        # logger.info(f"定时测试结果: {project_name}/{module_name}[{api_id}] - {json.dumps(result, ensure_ascii=False)}")
     else:
         logger.error(f"定时测试失败: 未找到接口数据 - {project_name}/{module_name}[{api_id}]")
 
@@ -1546,7 +1546,8 @@ def scheduler_add():
     """添加定时任务"""
     project_name = request.form.get('project_name')
     module_name = request.form.get('module_name')
-    api_id = int(request.form.get('api_id', 0))
+    api_id_str = request.form.get('case_index') or request.form.get('api_id', '0')
+    api_id = int(api_id_str) if api_id_str and api_id_str != 'undefined' else 0
     cron_expression = request.form.get('cron_expression')
 
     try:
@@ -1616,7 +1617,8 @@ def scheduler_update():
     job_id = request.form.get('job_id')
     project_name = request.form.get('project_name')
     module_name = request.form.get('module_name')
-    api_id = int(request.form.get('api_id', 0))
+    api_id_str = request.form.get('case_index') or request.form.get('api_id', '0')
+    api_id = int(api_id_str) if api_id_str and api_id_str != 'undefined' else 0
     cron_expression = request.form.get('cron_expression')
 
     try:
@@ -2246,15 +2248,40 @@ def test_execute_module(project_name, module_name):
     project_name = unquote(project_name)
     module_name = unquote(module_name)
 
-    projects_data = get_projects()
-
-    # 查找模块下的所有接口
+    # 从数据库中获取模块下的所有接口
     apis = []
-    if project_name in projects_data and 'modules' in projects_data[project_name]:
-        if module_name in projects_data[project_name]['modules']:
-            module_data = projects_data[project_name]['modules'][module_name]
-            if 'apis' in module_data:
-                apis = module_data['apis']
+    if db_handler:
+        try:
+            db_handler._ensure_connection()
+            # 查询项目ID
+            proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+            if proj:
+                proj_id = proj[0]['id']
+                # 查询模块ID
+                mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+                if mod:
+                    mod_id = mod[0]['id']
+                    # 查询模块下的所有接口
+                    api_list = db_handler.query("SELECT * FROM apis WHERE module_id = %s ORDER BY id", (mod_id,))
+                    if api_list:
+                        for api in api_list:
+                            # 构造测试数据，与定时任务的处理方式一致
+                            api_data = {
+                                'api_id': api.get('id'),
+                                'case_name': api.get('case_name', ''),
+                                'url': api.get('url', ''),
+                                'method': api.get('method', 'GET'),
+                                'headers': json.loads(api.get('headers', '{}')),
+                                'data': json.loads(api.get('data', '{}')),
+                                'expected': json.loads(api.get('expected', '{}')),
+                                'extractions': json.loads(api.get('extractions', '{}')),
+                                'project': project_name,
+                                'module': module_name,
+                                'source': '执行'
+                            }
+                            apis.append(api_data)
+        except Exception as e:
+            logger.error(f"获取模块接口数据失败: {e}", exc_info=True)
 
     if not apis:
         return jsonify({'success': False, 'error': '模块不存在或没有接口', 'results': []})
@@ -2264,14 +2291,12 @@ def test_execute_module(project_name, module_name):
     passed = 0
     failed = 0
     for i, api_data in enumerate(apis):
-        api_data = dict(api_data)  # 复制一份避免修改原始数据
-        api_data['project'] = project_name
-        api_data['module'] = module_name
-        api_data['source'] = '执行' 
+        # api_data已经从数据库中构造，包含所有必要信息 
         try:
             result = execute_api_test(api_data)
             result['case_name'] = api_data.get('case_name', f'接口{i+1}')
             result['index'] = i
+            result['api_id'] = api_data.get('api_id')
             if result.get('success'):
                 passed += 1
             else:
@@ -2283,7 +2308,8 @@ def test_execute_module(project_name, module_name):
                 'success': False,
                 'error': str(e),
                 'case_name': api_data.get('case_name', f'接口{i+1}'),
-                'index': i
+                'index': i,
+                'api_id': api_data.get('api_id')
             })
 
     return jsonify({

@@ -25,6 +25,7 @@ if __name__ == '__main__':
     print(f"请在浏览器中访问: http://localhost:{args.port}")
     print("=" * 50)
 
+
     if args.dev:
         # 开发模式：使用Flask内置服务器（支持热重载）
         print("[开发模式] 使用Flask开发服务器")
@@ -36,7 +37,7 @@ if __name__ == '__main__':
             print(f"[生产模式] 使用Waitress WSGI服务器")
             print(f"监听地址: {args.host}:{args.port}")
             serve(app, host=args.host, port=args.port, threads=4,
-                  _quiet=False,
+                  _quiet=True,
                   expose_tracebacks=True,
                   channel_request_lookahead=10,
                   asyncore_use_poll=True)
