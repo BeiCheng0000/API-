@@ -9,7 +9,7 @@ database:
     charset: utf8mb4
     database: test_db
     host: localhost
-    password: ''
+    password: '123456'
     port: 3306
     user: root
 email:

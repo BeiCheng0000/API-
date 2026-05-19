@@ -138,7 +138,30 @@ cp .env.example .env
 
 > ⚠️ **重要**：默认环境配置为 `dev`（开发环境），请勿直接使用 `prod` 环境运行测试。
 
-### 4. 执行测试
+### 4. 初始化数据库（可选）
+
+如果需要使用数据库存储测试数据，请先初始化数据库：
+
+```bash
+# Windows
+init_db.bat
+
+# Linux/Mac
+chmod +x init_db.sh
+./init_db.sh
+
+# 或直接运行Python脚本
+python scripts/init_database.py
+```
+
+数据库初始化脚本会：
+- 创建MySQL数据库和表结构
+- 导入 `data` 目录中的测试数据
+- 支持项目、模块、API、环境、变量、定时任务和测试统计数据的持久化
+
+> 📖 详细的数据库初始化说明请参考 [scripts/README.md](scripts/README.md)
+
+### 5. 执行测试
 
 ```bash
 # 方式一：使用启动脚本（推荐）
@@ -160,7 +183,7 @@ python run_tests.py --parallel --workers 4
 python run_tests.py --report --open
 ```
 
-### 5. 启动 Web 应用
+### 6. 启动 Web 应用
 
 ```bash
 # 生产模式（推荐，使用 Waitress 服务器）

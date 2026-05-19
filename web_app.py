@@ -36,6 +36,7 @@ from api.base_api import BaseAPI
 from common.yaml_handler import YamlHandler
 from common.logger_handler import logger
 from common.config_handler import env_config
+from common.db_handler import MySQLHandler
 
 # 创建Flask应用
 app = Flask(__name__)
@@ -44,6 +45,58 @@ app.secret_key = 'api_automation_platform_secret_key_2024'  # ⚠️ 生产环�
 # 全局HTTP Session，复用TCP连接，避免每次请求都重新建立连接（DNS解析+TCP握手+TLS握手约300ms）
 import requests as _requests
 _http_session = _requests.Session()
+
+# 数据库处理器（用于统计数据持久化）
+db_handler = None
+try:
+    db_handler = MySQLHandler()
+    db_handler.connect()
+    logger.info("数据库连接成功，统计数据将保存到数据库")
+
+    # 自动迁移：为已有数据库添加 timestamp 和 error 字段
+    try:
+        columns = db_handler.query(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'test_statistics'"
+        )
+        column_names = [col['COLUMN_NAME'] for col in columns] if columns else []
+
+        if 'timestamp' not in column_names:
+            db_handler.execute(
+                "ALTER TABLE test_statistics ADD COLUMN `timestamp` VARCHAR(30) COMMENT '记录时间戳(前端展示用)' AFTER `response_body`"
+            )
+            db_handler.execute(
+                "UPDATE test_statistics SET timestamp = DATE_FORMAT(created_at, '%%Y-%%m-%%d %%H:%%i:%%s') WHERE timestamp IS NULL OR timestamp = ''"
+            )
+            logger.info("自动迁移：已添加 timestamp 字段并同步历史数据")
+
+        if 'error' not in column_names:
+            db_handler.execute(
+                "ALTER TABLE test_statistics ADD COLUMN `error` TEXT COMMENT '错误信息' AFTER `timestamp`"
+            )
+            logger.info("自动迁移：已添加 error 字段")
+    except Exception as migrate_err:
+        logger.warning(f"自动迁移检查失败（新数据库无需迁移）: {migrate_err}")
+
+    # 启动时预加载统计数据
+    try:
+        logger.info("=" * 50)
+        logger.info("启动预加载：开始从数据库获取统计数据...")
+        db_handler._ensure_connection()
+        preload_count = db_handler.query("SELECT COUNT(*) as cnt FROM test_statistics")
+        total_count = preload_count[0]['cnt'] if preload_count else 0
+        logger.info(f"启动预加载：数据库中共有 {total_count} 条统计数据")
+        if total_count > 0:
+            sample_data = db_handler.query("SELECT id, project, module, case_name, method, status_code FROM test_statistics ORDER BY id DESC LIMIT 5")
+            logger.info(f"启动预加载：最近5条数据预览:")
+            for row in sample_data:
+                logger.info(f"  - ID:{row.get('id')} | 项目:{row.get('project','')} | 模块:{row.get('module','')} | 用例:{row.get('case_name','')} | 方法:{row.get('method','')} | 状态码:{row.get('status_code','')}")
+        logger.info("启动预加载：统计数据加载完成")
+        logger.info("=" * 50)
+    except Exception as preload_err:
+        logger.warning(f"启动预加载统计数据失败: {preload_err}")
+
+except Exception as e:
+    logger.warning(f"数据库连接失败: {e}，统计数据将保存到文件")
 
 # 项目根目录
 BASE_DIR = Path(__file__).parent
@@ -159,25 +212,180 @@ scheduler = BackgroundScheduler()
 scheduler.start()
 
 
+def _check_db_available() -> bool:
+    """
+    检查数据库是否可用（统一连接检查，避免重复 ping 导致 cursor 失效）
+
+    Returns:
+        bool: 数据库是否可用
+    """
+    if not db_handler:
+        logger.debug("_check_db_available: db_handler 为 None，数据库不可用")
+        return False
+    try:
+        db_handler._ensure_connection()
+        available = db_handler.connection is not None
+        logger.debug(f"_check_db_available: 数据库可用={available}, connection={db_handler.connection is not None}, cursor={db_handler.cursor is not None}")
+        return available
+    except Exception as e:
+        logger.warning(f"数据库连接检查失败: {e}")
+        return False
+
+
 def get_statistics_data() -> List[Dict[str, Any]]:
     """
-    获取统计数据
+    获取统计数据（仅从数据库读取）
 
     Returns:
         统计数据列表
     """
-    if os.path.exists(STATISTICS_FILE):
-        try:
-            with open(STATISTICS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
+    try:
+        print("[DEBUG] get_statistics_data() 被调用", flush=True)
+
+        if not db_handler:
+            logger.error("db_handler 为 None，无法读取统计数据")
+            print("[DEBUG] db_handler 为 None，无法读取统计数据", flush=True)
             return []
-    return []
+
+        # 确保连接可用
+        db_handler._ensure_connection()
+
+        # 从数据库读取统计数据
+        print("[DEBUG] 开始从数据库读取统计数据...", flush=True)
+        logger.info("开始从数据库读取统计数据...")
+        statistics = db_handler.query(
+            """SELECT id, method, url, status_code, response_time,
+               assertion_passed, assertion_count, assertion_passed_count,
+               source, project, module, case_name, request_headers,
+               request_body, response_headers, response_body,
+               timestamp, error, created_at
+               FROM test_statistics
+               ORDER BY id DESC"""
+        )
+
+        if statistics:
+            print(f"[DEBUG] 从数据库成功读取到 {len(statistics)} 条统计数据", flush=True)
+            logger.info(f"从数据库成功读取到 {len(statistics)} 条统计数据")
+        else:
+            print("[DEBUG] 数据库中没有找到统计数据", flush=True)
+            logger.warning("数据库中没有找到统计数据")
+
+        # 为每条记录添加断言结果，并做字段映射确保前端兼容
+        for stat in statistics:
+            # 映射 timestamp：优先用 timestamp 字段，否则用 created_at
+            if 'timestamp' not in stat or not stat['timestamp']:
+                stat['timestamp'] = str(stat.get('created_at', '')) if stat.get('created_at') else ''
+
+            # 确保 error 字段存在
+            if 'error' not in stat:
+                stat['error'] = ''
+
+            # 确保 id 是整数类型
+            statistic_id = int(stat['id']) if stat['id'] else 0
+            assertion_results = db_handler.query(
+                "SELECT * FROM assertion_results WHERE statistic_id = %s",
+                (statistic_id,)
+            )
+            stat['assertion_results'] = assertion_results
+
+        # 确保返回的是列表
+        return list(statistics) if isinstance(statistics, tuple) else statistics
+
+    except Exception as e:
+        logger.error(f"从数据库读取统计数据失败: {e}")
+        return []
+
+
+def _insert_statistic_record_to_db(record: Dict[str, Any]) -> bool:
+    """
+    将单条统计记录插入数据库（内部辅助函数）
+
+    Args:
+        record: 统计记录
+
+    Returns:
+        bool: 插入是否成功
+    """
+    if not db_handler:
+        logger.error("[DB_INSERT] db_handler 为 None，无法插入")
+        return False
+
+    # 确保数据库连接可用
+    try:
+        db_handler._ensure_connection()
+    except Exception as e1:
+        logger.warning(f"[DB_INSERT] _ensure_connection 失败: {e1}，尝试 connect")
+        try:
+            db_handler.connect()
+        except Exception as e2:
+            logger.error(f"[DB_INSERT] connect 也失败: {e2}")
+            return False
+
+    if not db_handler.connection:
+        logger.error("[DB_INSERT] db_handler.connection 仍为 None，无法插入")
+        return False
+
+    # 插入测试统计记录（包含 timestamp 和 error 字段，确保数据完整写入数据库）
+    db_handler.execute(
+        """INSERT INTO test_statistics
+        (method, url, status_code, response_time, assertion_passed, assertion_count,
+        assertion_passed_count, source, project, module, case_name, request_headers,
+        request_body, response_headers, response_body, timestamp, error)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+        (
+            record.get('method', '') or 'GET',
+            record.get('url', '') or 'http://localhost',
+            record.get('status_code') or 0,
+            record.get('response_time') or 0.0,
+            record.get('assertion_passed') if record.get('assertion_passed') is not None else False,
+            record.get('assertion_count') or 0,
+            record.get('assertion_passed_count') or 0,
+            record.get('source', '') or '手动',
+            record.get('project', '') or '默认项目',
+            record.get('module', '') or '默认模块',
+            record.get('case_name', '') or '默认用例',
+            json.dumps(record.get('request_headers', {}) or {}, ensure_ascii=False),
+            json.dumps(record.get('request_body') or {}, ensure_ascii=False),
+            json.dumps(record.get('response_headers', {}) or {}, ensure_ascii=False),
+            json.dumps(record.get('response_body') or {}, ensure_ascii=False),
+            record.get('timestamp', '') or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            record.get('error', '') or ''
+        )
+    )
+
+    # 获取刚插入的统计ID
+    result = db_handler.query(
+        "SELECT id FROM test_statistics ORDER BY id DESC LIMIT 1"
+    )
+    if result and result[0] and result[0]['id']:
+        statistic_id = int(result[0]['id'])
+    else:
+        statistic_id = 0
+
+    # 插入断言结果
+    for assertion in record.get('assertion_results', []):
+        db_handler.execute(
+            """INSERT INTO assertion_results
+            (statistic_id, type, field, expected, actual, passed)
+            VALUES (%s, %s, %s, %s, %s, %s)""",
+            (
+                statistic_id,
+                assertion.get('type', ''),
+                assertion.get('field', ''),
+                str(assertion.get('expected', '')),
+                str(assertion.get('actual', '')),
+                assertion.get('passed', False)
+            )
+        )
+    return True
 
 
 def save_statistics_data(data: List[Dict[str, Any]]) -> bool:
     """
-    保存统计数据
+    保存统计数据（仅操作数据库）
+
+    当 data 为空列表时清空数据库表（用户主动清空统计数据的场景）。
+    否则逐条插入新数据（增量模式）。
 
     Args:
         data: 统计数据列表
@@ -186,22 +394,30 @@ def save_statistics_data(data: List[Dict[str, Any]]) -> bool:
         bool: 保存是否成功
     """
     try:
-        os.makedirs(os.path.dirname(STATISTICS_FILE), exist_ok=True)
+        if not db_handler:
+            logger.error("db_handler 为 None，无法保存统计数据")
+            return False
 
-        with open(STATISTICS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        # 确保连接可用
+        db_handler._ensure_connection()
 
-        logger.info(f"统计数据已保存: {STATISTICS_FILE}")
+        if len(data) == 0:
+            # 清空数据库表
+            db_handler.execute("DELETE FROM assertion_results")
+            db_handler.execute("DELETE FROM test_statistics")
+            logger.info("统计数据已清空")
+        else:
+            # 逐条插入新数据（增量模式）
+            for record in data:
+                _insert_statistic_record_to_db(record)
+            logger.info(f"统计数据已追加到数据库，共 {len(data)} 条记录")
+
         return True
 
     except Exception as e:
         logger.error(f"保存统计数据时发生异常: {str(e)}")
         return False
             
-    except Exception as e:
-        logger.error(f"保存统计数据时发生异常: {str(e)}")
-        return False
-
 
 def add_statistics_record(record: Dict[str, Any]) -> bool:
     """
@@ -214,23 +430,51 @@ def add_statistics_record(record: Dict[str, Any]) -> bool:
         bool: 添加并保存是否成功
     """
     try:
-        data = get_statistics_data()
-        record['id'] = len(data) + 1
         record['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        data.append(record)
-        # 最多保留10000条记录
-        if len(data) > 10000:
-            data = data[-10000:]
-            logger.error("清理了一次数据")
-        
-        saved = save_statistics_data(data)
-        if not saved:
-            logger.error("添加统计记录失败：数据保存失败")
-            return False
-        return True
+
+        # 直接尝试数据库插入
+        if db_handler:
+            try:
+                insert_result = _insert_statistic_record_to_db(record)
+                if insert_result:
+                    logger.info(f"统计记录已插入数据库, source={record.get('source', '未知')}")
+                    return True
+                else:
+                    logger.warning("_insert_statistic_record_to_db 返回 False，尝试重新连接")
+            except Exception as db_err:
+                logger.warning(f"数据库插入失败: {db_err}，尝试重新连接")
+
+            # 重试一次
+            try:
+                db_handler.connect()
+                retry_result = _insert_statistic_record_to_db(record)
+                if retry_result:
+                    logger.info(f"重新连接后统计记录已插入数据库, source={record.get('source', '未知')}")
+                    return True
+                else:
+                    logger.error("重新连接后插入仍返回 False")
+                    return False
+            except Exception as retry_err:
+                logger.error(f"重新连接数据库后插入仍失败: {retry_err}")
+                return False
+
+        logger.error("db_handler 为 None，无法插入统计记录")
+        return False
+
     except Exception as e:
         logger.error(f"添加统计记录时发生异常: {str(e)}")
         return False
+
+
+def sync_file_records_to_db() -> int:
+    """
+    已废弃：不再使用文件同步，数据全部在数据库中操作。
+    保留函数签名以兼容调用点。
+
+    Returns:
+        int: 0
+    """
+    return 0
 
 
 def get_test_data() -> Dict[str, Any]:
@@ -296,11 +540,9 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
         测试结果
     """
     try:
-        # 调试：打印api_data类型和内容
-        logger.info(f"[DEBUG] api_data type={type(api_data)}, value={api_data}")
         if not isinstance(api_data, dict):
-            logger.error(f"[DEBUG] api_data is not dict! type={type(api_data)}")
-            return {"error": f"api_data类型错误: 期望dict, 实际{type(api_data).__name__}: {api_data}", "success": False}
+            logger.error(f"api_data类型错误: type={type(api_data)}")
+            return {"error": f"api_data类型错误: 期望dict, 实际{type(api_data).__name__}", "success": False}
 
         # 获取项目级别的环境配置
         project_name = api_data.get('project', '')
@@ -621,10 +863,12 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                 "response_headers": response.get("headers", {}),
                 "response_body": response.get("data"),
             }
+            logger.info(f"[execute_api_test] 准备记录统计数据, source={stat_record.get('source')}, url={display_url}")
             # 检查统计数据是否成功记录
             stat_saved = add_statistics_record(stat_record)
+            logger.info(f"[execute_api_test] 统计数据记录结果: saved={stat_saved}")
             if not stat_saved:
-                logger.error("记录统计数据失败：无法保存到文件")
+                logger.error("记录统计数据失败：无法保存到数据库")
                 # 可以在这里添加额外的错误处理逻辑，如重试机制
         except Exception as stat_err:
             logger.error(f"记录统计数据时发生异常: {stat_err}")
@@ -1495,7 +1739,19 @@ def statistics_modules():
 @app.route('/statistics/list')
 def statistics_list():
     """获取统计数据列表，支持筛选和分页"""
+    print("=" * 60, flush=True)
+    print("[DEBUG] 收到统计数据列表请求，开始从数据库获取数据...", flush=True)
+    logger.info("收到统计数据列表请求，开始从数据库获取数据...")
     data = get_statistics_data()
+    print(f"[DEBUG] 获取到 {len(data)} 条原始数据", flush=True)
+    logger.info(f"获取到 {len(data)} 条原始数据")
+    if data:
+        first_id = data[0].get('id', 'N/A')
+        last_id = data[-1].get('id', 'N/A')
+        logger.info(f"[关键调试] 原始数据ID范围: 第1条ID={first_id}, 最后1条ID={last_id}")
+        # 打印前3条的ID和case_name
+        for i, r in enumerate(data[:3]):
+            logger.info(f"  原始数据[{i}]: id={r.get('id')}, case_name={r.get('case_name')}, project={r.get('project')}")
 
     # 获取筛选参数
     project = request.args.get('project', '')
@@ -1576,12 +1832,18 @@ def statistics_list():
     start = (page - 1) * page_size
     page_data = filtered[start:start + page_size]
 
+    # 关键调试：打印返回给前端的数据
+    if page_data:
+        logger.info(f"[关键调试] 返回前端 {len(page_data)} 条数据, 第1条ID={page_data[0].get('id')}, case_name={page_data[0].get('case_name')}")
+    logger.info(f"[关键调试] 分页信息: page={page}, page_size={page_size}, total={total}, total_pages={total_pages}")
+
     return jsonify({
         'records': page_data,
         'total': total,
         'page': page,
         'page_size': page_size,
         'total_pages': total_pages,
+        'data_source': 'DATABASE',  # 标记数据来源
         'summary': {
             'total_count': total,
             'success_count': success_count,
@@ -1596,34 +1858,6 @@ def statistics_list():
             'trend_data': trend_data
         }
     })
-
-
-# 路由：清空统计数据
-@app.route('/statistics/clear', methods=['POST'])
-def statistics_clear():
-    """清空统计数据，带有保存状态检查"""
-    try:
-        # 创建备份文件名（带时间戳）
-        import time
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        backup_file = f"{STATISTICS_FILE}.bak_clear_{timestamp}"
-        
-        # 如果存在旧数据文件，先创建备份
-        if os.path.exists(STATISTICS_FILE):
-            import shutil
-            shutil.copy2(STATISTICS_FILE, backup_file)
-            logger.info(f"清空前已创建数据备份: {backup_file}")
-        
-        # 尝试清空数据
-        saved = save_statistics_data([])
-        if saved:
-            return jsonify({'success': True, 'message': '统计数据已清空', 'backup_file': backup_file})
-        else:
-            logger.error("清空统计数据失败：数据保存失败")
-            return jsonify({'success': False, 'message': '清空统计数据失败'}), 500
-    except Exception as e:
-        logger.error(f"清空统计数据时发生异常: {str(e)}")
-        return jsonify({'success': False, 'message': f'清空统计数据失败: {str(e)}'}), 500
 
 
 # 路由：导出统计数据
@@ -1792,11 +2026,37 @@ def statistics_detail(record_id=None):
         except (ValueError, TypeError):
             return jsonify({'success': False, 'error': '无效的ID参数'}), 400
 
-    data = get_statistics_data()
-    for r in data:
-        if r.get('id') == record_id:
+    try:
+        if not db_handler:
+            return jsonify({'success': False, 'error': '数据库不可用'}), 500
+        db_handler._ensure_connection()
+        stat = db_handler.query(
+            """SELECT id, method, url, status_code, response_time,
+               assertion_passed, assertion_count, assertion_passed_count,
+               source, project, module, case_name, request_headers,
+               request_body, response_headers, response_body,
+               timestamp, error, created_at
+               FROM test_statistics WHERE id = %s""",
+            (record_id,)
+        )
+        if stat and len(stat) > 0:
+            r = stat[0]
+            # 映射 timestamp
+            if 'timestamp' not in r or not r['timestamp']:
+                r['timestamp'] = str(r.get('created_at', '')) if r.get('created_at') else ''
+            if 'error' not in r:
+                r['error'] = ''
+            # 获取断言结果
+            assertion_results = db_handler.query(
+                "SELECT * FROM assertion_results WHERE statistic_id = %s",
+                (record_id,)
+            )
+            r['assertion_results'] = assertion_results
             return jsonify({'success': True, 'detail': r})
-    return jsonify({'success': False, 'error': '记录不存在'}), 404
+        return jsonify({'success': False, 'error': '记录不存在'}), 404
+    except Exception as e:
+        logger.error(f"查询统计详情失败: {e}")
+        return jsonify({'success': False, 'error': f'查询失败: {str(e)}'}), 500
 
 
 # 路由：获取项目的环境配置
@@ -2229,6 +2489,9 @@ def download_backup():
 
 # 启动时恢复持久化的定时任务（必须在 scheduled_test_job 函数定义之后）
 _load_scheduler_jobs()
+
+# 启动时同步文件中未入库的记录到数据库
+sync_file_records_to_db()
 
 
 if __name__ == '__main__':

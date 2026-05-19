@@ -1,0 +1,17 @@
+[
+  {
+    "id": 2650,
+    "method": "GET",
+    "url": "https://apipad.xuewangshufang.com/api/branch/android/integralRecord/queryIntegralRecord",
+    "status_code": 200,
+    "response_time": 77.91,
+    "assertion_passed": 1,
+    "assertion_count": 2,
+    "assertion_passed_count": 2,
+    "source": "定时",
+    "project": "学王书房",
+    "module": "登录模块",
+    "case_name": "积分记录",
+    "timestamp": "2026-05-19 14:02:00",
+    "error": "",
+    "created_at": 

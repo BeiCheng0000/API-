@@ -35,7 +35,11 @@ if __name__ == '__main__':
             from waitress import serve
             print(f"[生产模式] 使用Waitress WSGI服务器")
             print(f"监听地址: {args.host}:{args.port}")
-            serve(app, host=args.host, port=args.port, threads=4)
+            serve(app, host=args.host, port=args.port, threads=4,
+                  _quiet=False,
+                  expose_tracebacks=True,
+                  channel_request_lookahead=10,
+                  asyncore_use_poll=True)
         except ImportError:
             print("警告: waitress未安装，回退到Flask开发服务器")
             print("建议执行: pip install waitress")

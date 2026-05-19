@@ -11,40 +11,40 @@ from common.logger_handler import logger
 
 class DBHandler:
     """数据库处理基类"""
-    
+
     def __init__(self):
         """初始化数据库处理器"""
         pass
-    
+
     def connect(self):
         """连接数据库"""
         raise NotImplementedError("子类必须实现此方法")
-    
+
     def close(self):
         """关闭数据库连接"""
         raise NotImplementedError("子类必须实现此方法")
-    
+
     def execute(self, sql: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """
         执行SQL语句
-        
+
         Args:
             sql: SQL语句
             params: SQL参数
-        
+
         Returns:
             执行结果
         """
         raise NotImplementedError("子类必须实现此方法")
-    
+
     def query(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         查询数据
-        
+
         Args:
             sql: SQL语句
             params: SQL参数
-        
+
         Returns:
             查询结果列表
         """
@@ -53,11 +53,11 @@ class DBHandler:
 
 class MySQLHandler(DBHandler):
     """MySQL数据库处理类"""
-    
+
     def __init__(self, db_config: Optional[Dict[str, Any]] = None):
         """
         初始化MySQL处理器
-        
+
         Args:
             db_config: 数据库配置，如果为None，则从配置文件中读取
         """
@@ -65,91 +65,201 @@ class MySQLHandler(DBHandler):
         self.db_config = db_config or config.get("database.mysql", {})
         self.connection = None
         self.cursor = None
-    
+        self._lock = __import__('threading').Lock()
+
     def connect(self):
-        """连接MySQL数据库"""
-        try:
-            import pymysql
-            self.connection = pymysql.connect(
-                host=self.db_config.get("host", "localhost"),
-                port=self.db_config.get("port", 3306),
-                user=self.db_config.get("user", "root"),
-                password=self.db_config.get("password", ""),
-                database=self.db_config.get("database", "test_db"),
-                charset=self.db_config.get("charset", "utf8mb4"),
-                cursorclass=pymysql.cursors.DictCursor
-            )
-            self.cursor = self.connection.cursor()
-            logger.info(f"成功连接MySQL数据库: {self.db_config.get('host', 'localhost')}")
-        except ImportError:
-            logger.error("未安装pymysql库，请先安装: pip install pymysql")
-            raise
-        except Exception as e:
-            logger.error(f"连接MySQL数据库失败: {e}")
-            raise
-    
+        """连接MySQL数据库（线程安全）"""
+        with self._lock:
+            try:
+                import pymysql
+                self.connection = pymysql.connect(
+                    host=self.db_config.get("host", "localhost"),
+                    port=self.db_config.get("port", 3306),
+                    user=self.db_config.get("user", "root"),
+                    password=self.db_config.get("password", ""),
+                    database=self.db_config.get("database", "test_db"),
+                    charset=self.db_config.get("charset", "utf8mb4"),
+                    cursorclass=pymysql.cursors.DictCursor
+                )
+                self.cursor = self.connection.cursor()
+                logger.info(f"成功连接MySQL数据库: {self.db_config.get('host', 'localhost')}")
+            except ImportError:
+                logger.error("未安装pymysql库，请先安装: pip install pymysql")
+                raise
+            except Exception as e:
+                logger.error(f"连接MySQL数据库失败: {e}")
+                raise
+
     def close(self):
-        """关闭MySQL数据库连接"""
-        if self.cursor:
-            self.cursor.close()
-        if self.connection:
-            self.connection.close()
-        logger.info("已关闭MySQL数据库连接")
-    
-    def execute(self, sql: str, params: Optional[Dict[str, Any]] = None) -> int:
+        """关闭MySQL数据库连接（线程安全）"""
+        with self._lock:
+            if self.cursor:
+                self.cursor.close()
+            if self.connection:
+                self.connection.close()
+            logger.info("已关闭MySQL数据库连接")
+
+    def _ensure_connection(self):
+        """确保数据库连接有效（线程安全）"""
+        with self._lock:
+            try:
+                if self.connection and self.cursor:
+                    # 测试连接是否有效
+                    self.connection.ping(reconnect=True)
+                    # 重新创建cursor，因为ping后cursor可能失效
+                    if not self.cursor or self.cursor.connection != self.connection:
+                        self.cursor = self.connection.cursor()
+                else:
+                    # connection 或 cursor 为 None，需要重新连接
+                    raise Exception("连接或游标为空，需要重新连接")
+            except Exception:
+                # 连接失效或为空，重新连接
+                try:
+                    import pymysql
+                    self.connection = pymysql.connect(
+                        host=self.db_config.get("host", "localhost"),
+                        port=self.db_config.get("port", 3306),
+                        user=self.db_config.get("user", "root"),
+                        password=self.db_config.get("password", ""),
+                        database=self.db_config.get("database", "test_db"),
+                        charset=self.db_config.get("charset", "utf8mb4"),
+                        cursorclass=pymysql.cursors.DictCursor
+                    )
+                    self.cursor = self.connection.cursor()
+                    logger.info(f"重新连接MySQL数据库成功: {self.db_config.get('host', 'localhost')}")
+                except Exception as e:
+                    logger.error(f"重新连接MySQL数据库失败: {e}")
+                    raise
+
+    def execute(self, sql: str, params: Optional[Union[Dict[str, Any], tuple]] = None) -> int:
         """
-        执行SQL语句
-        
+        执行SQL语句（线程安全）
+
         Args:
             sql: SQL语句
-            params: SQL参数
-        
+            params: SQL参数，可以是字典或元组
+
         Returns:
             受影响的行数
         """
-        if not self.connection:
-            self.connect()
-        
+        with self._lock:
+            self._ensure_connection_unsafe()
+
+            try:
+                logger.debug(f"执行SQL: {sql}, 参数: {params}")
+                self.cursor.execute(sql, params or ())
+                self.connection.commit()
+                return self.cursor.rowcount
+            except Exception as e:
+                try:
+                    self.connection.rollback()
+                except Exception:
+                    pass
+                logger.error(f"执行SQL失败: {e}")
+                # 执行失败时重新连接
+                try:
+                    import pymysql
+                    self.connection = pymysql.connect(
+                        host=self.db_config.get("host", "localhost"),
+                        port=self.db_config.get("port", 3306),
+                        user=self.db_config.get("user", "root"),
+                        password=self.db_config.get("password", ""),
+                        database=self.db_config.get("database", "test_db"),
+                        charset=self.db_config.get("charset", "utf8mb4"),
+                        cursorclass=pymysql.cursors.DictCursor
+                    )
+                    self.cursor = self.connection.cursor()
+                except Exception:
+                    pass
+                raise
+
+    def _ensure_connection_unsafe(self):
+        """确保数据库连接有效（不加锁版本，供已加锁的方法内部调用）"""
         try:
-            logger.debug(f"执行SQL: {sql}, 参数: {params}")
-            self.cursor.execute(sql, params or ())
-            self.connection.commit()
-            return self.cursor.rowcount
-        except Exception as e:
-            self.connection.rollback()
-            logger.error(f"执行SQL失败: {e}")
-            raise
-    
-    def query(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+            if self.connection and self.cursor:
+                self.connection.ping(reconnect=True)
+                if not self.cursor or self.cursor.connection != self.connection:
+                    self.cursor = self.connection.cursor()
+        except Exception:
+            try:
+                import pymysql
+                self.connection = pymysql.connect(
+                    host=self.db_config.get("host", "localhost"),
+                    port=self.db_config.get("port", 3306),
+                    user=self.db_config.get("user", "root"),
+                    password=self.db_config.get("password", ""),
+                    database=self.db_config.get("database", "test_db"),
+                    charset=self.db_config.get("charset", "utf8mb4"),
+                    cursorclass=pymysql.cursors.DictCursor
+                )
+                self.cursor = self.connection.cursor()
+                logger.info(f"重新连接MySQL数据库成功: {self.db_config.get('host', 'localhost')}")
+            except Exception as e:
+                logger.error(f"重新连接MySQL数据库失败: {e}")
+                raise
+
+    def query(self, sql: str, params: Optional[Union[Dict[str, Any], tuple]] = None) -> List[Dict[str, Any]]:
         """
-        查询数据
-        
+        查询数据（线程安全）
+
         Args:
             sql: SQL语句
-            params: SQL参数
-        
+            params: SQL参数，可以是字典或元组
+
         Returns:
             查询结果列表
         """
-        if not self.connection:
-            self.connect()
-        
-        try:
-            logger.debug(f"查询SQL: {sql}, 参数: {params}")
-            self.cursor.execute(sql, params or ())
-            return self.cursor.fetchall()
-        except Exception as e:
-            logger.error(f"查询数据失败: {e}")
-            raise
+        max_retries = 2
+        last_error = None
+
+        for attempt in range(max_retries):
+            with self._lock:
+                self._ensure_connection_unsafe()
+                try:
+                    logger.debug(f"查询SQL: {sql}, 参数: {params}")
+                    self.cursor.execute(sql, params or ())
+                    return self.cursor.fetchall()
+                except Exception as e:
+                    last_error = e
+                    error_msg = str(e)
+                    logger.warning(f"查询数据失败(第{attempt + 1}次): {e}")
+
+                    # PyMemoryView_FromBuffer 错误是 pymysql 内部 bug，重建 cursor 可能解决
+                    if 'PyMemoryView' in error_msg or 'buf must not be NULL' in error_msg:
+                        try:
+                            if self.connection:
+                                self.cursor = self.connection.cursor()
+                        except Exception:
+                            pass
+                        continue
+
+                    # 其他错误：重新连接后重试
+                    try:
+                        import pymysql
+                        self.connection = pymysql.connect(
+                            host=self.db_config.get("host", "localhost"),
+                            port=self.db_config.get("port", 3306),
+                            user=self.db_config.get("user", "root"),
+                            password=self.db_config.get("password", ""),
+                            database=self.db_config.get("database", "test_db"),
+                            charset=self.db_config.get("charset", "utf8mb4"),
+                            cursorclass=pymysql.cursors.DictCursor
+                        )
+                        self.cursor = self.connection.cursor()
+                    except Exception:
+                        pass
+
+        logger.error(f"查询数据最终失败: {last_error}")
+        raise last_error
 
 
 class MongoDBHandler(DBHandler):
     """MongoDB数据库处理类"""
-    
+
     def __init__(self, db_config: Optional[Dict[str, Any]] = None):
         """
         初始化MongoDB处理器
-        
+
         Args:
             db_config: 数据库配置，如果为None，则从配置文件中读取
         """
@@ -157,23 +267,23 @@ class MongoDBHandler(DBHandler):
         self.db_config = db_config or config.get("database.mongodb", {})
         self.client = None
         self.database = None
-    
+
     def connect(self):
         """连接MongoDB数据库"""
         try:
             import pymongo
-            
+
             # 构建连接URI
             user = self.db_config.get("user", "")
             password = self.db_config.get("password", "")
             host = self.db_config.get("host", "localhost")
             port = self.db_config.get("port", 27017)
-            
+
             if user and password:
                 uri = f"mongodb://{user}:{password}@{host}:{port}/"
             else:
                 uri = f"mongodb://{host}:{port}/"
-            
+
             self.client = pymongo.MongoClient(uri)
             self.database = self.client[self.db_config.get("database", "test_db")]
             logger.info(f"成功连接MongoDB数据库: {host}:{port}")
@@ -183,33 +293,33 @@ class MongoDBHandler(DBHandler):
         except Exception as e:
             logger.error(f"连接MongoDB数据库失败: {e}")
             raise
-    
+
     def close(self):
         """关闭MongoDB数据库连接"""
         if self.client:
             self.client.close()
         logger.info("已关闭MongoDB数据库连接")
-    
-    def execute(self, collection: str, operation: str, data: Dict[str, Any], 
+
+    def execute(self, collection: str, operation: str, data: Dict[str, Any],
                filter_query: Optional[Dict[str, Any]] = None) -> Any:
         """
         执行数据库操作
-        
+
         Args:
             collection: 集合名称
             operation: 操作类型，如insert, update, delete
             data: 操作数据
             filter_query: 过滤条件，用于update和delete操作
-        
+
         Returns:
             操作结果
         """
         if not self.database:
             self.connect()
-        
+
         try:
             coll = self.database[collection]
-            
+
             if operation == "insert":
                 result = coll.insert_one(data)
                 logger.debug(f"插入数据到集合 {collection}: {data}")
@@ -228,27 +338,27 @@ class MongoDBHandler(DBHandler):
         except Exception as e:
             logger.error(f"执行数据库操作失败: {e}")
             raise
-    
-    def query(self, collection: str, filter_query: Optional[Dict[str, Any]] = None, 
+
+    def query(self, collection: str, filter_query: Optional[Dict[str, Any]] = None,
               limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         查询数据
-        
+
         Args:
             collection: 集合名称
             filter_query: 查询条件
             limit: 返回结果数量限制
-        
+
         Returns:
             查询结果列表
         """
         if not self.database:
             self.connect()
-        
+
         try:
             coll = self.database[collection]
             logger.debug(f"查询集合 {collection} 中的数据: {filter_query}")
-            
+
             if limit:
                 return list(coll.find(filter_query or {}).limit(limit))
             return list(coll.find(filter_query or {}))

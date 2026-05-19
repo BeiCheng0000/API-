@@ -9,6 +9,8 @@
  * @param {HTMLElement} menuItem - 被点击的菜单项元素
  */
 function switchPage(pageName, menuItem) {
+    console.log('[页面切换] 切换到页面:', pageName);
+
     // 隐藏所有页面
     document.querySelectorAll('.page-content').forEach(page => {
         page.classList.remove('active');
@@ -58,16 +60,22 @@ function switchPage(pageName, menuItem) {
     }
 
     // 切换到数据统计页面时自动加载数据
-    if (pageName === 'statistics' && typeof loadStatistics === 'function') {
-        // 设置默认日期范围（如果日期为空）
-        const dateStart = document.getElementById('statFilterDateStart');
-        const dateEnd = document.getElementById('statFilterDateEnd');
-        if (dateStart && dateEnd && (!dateStart.value || !dateEnd.value)) {
-            if (typeof setDefaultStatDateRange === 'function') {
-                setDefaultStatDateRange();
+    if (pageName === 'statistics') {
+        console.log('[页面切换] 检测到数据统计页面, loadStatistics函数是否存在:', typeof loadStatistics);
+        if (typeof loadStatistics === 'function') {
+            // 设置默认日期范围（如果日期为空）
+            const dateStart = document.getElementById('statFilterDateStart');
+            const dateEnd = document.getElementById('statFilterDateEnd');
+            if (dateStart && dateEnd && (!dateStart.value || !dateEnd.value)) {
+                if (typeof setDefaultStatDateRange === 'function') {
+                    setDefaultStatDateRange();
+                }
             }
+            console.log('[页面切换] 调用 loadStatistics()');
+            loadStatistics();
+        } else {
+            console.error('[页面切换] loadStatistics 函数未定义!');
         }
-        loadStatistics();
     }
 }
 

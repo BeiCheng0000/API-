@@ -28,9 +28,9 @@ python-dotenv==1.0.0
 pytz==2023.3
 faker==19.6.2
 
-# 数据库操作(可选)
-# PyMySQL==1.1.0
-# pymongo==4.5.0
+# 数据库操作
+PyMySQL==1.1.0
+pymongo==4.5.0
 
 # Web应用
 Flask==3.0.0
