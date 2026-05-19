@@ -221,6 +221,7 @@ def add_statistics_record(record: Dict[str, Any]) -> bool:
         # 最多保留10000条记录
         if len(data) > 10000:
             data = data[-10000:]
+            logger.error("清理了一次数据")
         
         saved = save_statistics_data(data)
         if not saved:
