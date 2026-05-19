@@ -102,38 +102,39 @@ except Exception as e:
 BASE_DIR = Path(__file__).parent
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
-# 测试数据文件路径
-TEST_DATA_FILE = os.path.join(DATA_DIR, "test_data.yaml")
-
-# 项目数据文件路径
-PROJECTS_FILE = os.path.join(DATA_DIR, "projects.yaml")
-
-# 统计数据文件路径
+# 统计数据文件路径（仅用于备份/恢复功能的路径校验）
 STATISTICS_FILE = os.path.join(DATA_DIR, "statistics.json")
-
-# 定时任务持久化文件路径
-SCHEDULER_FILE = os.path.join(DATA_DIR, "scheduler_jobs.json")
 
 
 def _save_scheduler_jobs():
-    """将当前定时任务保存到JSON文件"""
+    """将当前定时任务保存到数据库"""
     try:
-        jobs_data = []
+        if not db_handler:
+            logger.error("db_handler 为 None，无法保存定时任务")
+            return
+
+        db_handler._ensure_connection()
+
+        # 清空旧数据并重新写入
+        db_handler.execute("DELETE FROM scheduler_jobs")
+
         for job in scheduler.get_jobs():
-            # 从trigger中提取cron表达式
             cron_expression = _extract_cron_expression(job.trigger)
 
-            jobs_data.append({
-                'id': job.id,
-                'name': job.name,
-                'project_name': job.args[0] if len(job.args) > 0 else '',
-                'module_name': job.args[1] if len(job.args) > 1 else '',
-                'case_index': job.args[2] if len(job.args) > 2 else 0,
-                'cron_expression': cron_expression
-            })
+            db_handler.execute(
+                """INSERT INTO scheduler_jobs (id, name, project_name, module_name, case_index, cron_expression)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (
+                    job.id,
+                    job.name,
+                    job.args[0] if len(job.args) > 0 else '',
+                    job.args[1] if len(job.args) > 1 else '',
+                    job.args[2] if len(job.args) > 2 else 0,
+                    cron_expression
+                )
+            )
 
-        with open(SCHEDULER_FILE, 'w', encoding='utf-8') as f:
-            json.dump(jobs_data, f, ensure_ascii=False, indent=2)
+        logger.info("定时任务已保存到数据库")
     except Exception as e:
         logger.error(f"保存定时任务配置失败: {e}")
 
@@ -174,18 +175,23 @@ def _extract_cron_expression(trigger):
 
 
 def _load_scheduler_jobs():
-    """从JSON文件恢复定时任务"""
-    if not os.path.exists(SCHEDULER_FILE):
+    """从数据库恢复定时任务"""
+    if not db_handler:
+        logger.warning("db_handler 为 None，无法恢复定时任务")
         return
 
     try:
-        with open(SCHEDULER_FILE, 'r', encoding='utf-8') as f:
-            jobs_data = json.load(f)
+        db_handler._ensure_connection()
+        jobs_data = db_handler.query("SELECT * FROM scheduler_jobs")
+
+        if not jobs_data:
+            logger.info("数据库中没有定时任务数据")
+            return
 
         restored_count = 0
         for job_info in jobs_data:
             try:
-                cron_expr = job_info.get('cron_expression', '').strip()
+                cron_expr = (job_info.get('cron_expression') or '').strip()
                 if not cron_expr:
                     logger.warning(f"跳过无效定时任务({job_info.get('name', '未知')}): cron表达式为空")
                     continue
@@ -194,7 +200,7 @@ def _load_scheduler_jobs():
                     func=scheduled_test_job,
                     trigger=CronTrigger.from_crontab(cron_expr),
                     id=job_info['id'],
-                    args=[job_info['project_name'], job_info['module_name'], job_info['case_index']],
+                    args=[job_info['project_name'], job_info['module_name'], job_info.get('case_index', 0)],
                     name=job_info['name']
                 )
                 restored_count += 1
@@ -479,20 +485,55 @@ def sync_file_records_to_db() -> int:
 
 def get_test_data() -> Dict[str, Any]:
     """
-    获取测试数据
+    获取测试数据（从数据库读取，兼容旧格式）
 
     Returns:
-        测试数据字典
+        测试数据字典，格式为 {project_name: [api_list]}
     """
-    data = YamlHandler.read_yaml(TEST_DATA_FILE)
-    if data is None:
+    try:
+        if not db_handler:
+            return {}
+
+        db_handler._ensure_connection()
+
+        # 从数据库读取所有项目、模块、API，组装成兼容旧格式的字典
+        result = {}
+        projects = db_handler.query("SELECT id, name FROM projects")
+        for proj in projects:
+            proj_name = proj['name']
+            proj_id = proj['id']
+
+            modules = db_handler.query("SELECT id, name FROM modules WHERE project_id = %s", (proj_id,))
+            api_list = []
+            for mod in modules:
+                mod_id = mod['id']
+                apis = db_handler.query("SELECT * FROM apis WHERE module_id = %s ORDER BY id", (mod_id,))
+                for api in apis:
+                    api_list.append({
+                        'case_name': api.get('case_name', ''),
+                        'url': api.get('url', ''),
+                        'method': api.get('method', 'GET'),
+                        'headers': api.get('headers') if isinstance(api.get('headers'), dict) else {},
+                        'data': api.get('data') if isinstance(api.get('data'), (dict, str)) else {},
+                        'expected': api.get('expected') if isinstance(api.get('expected'), dict) else {},
+                        'extractions': api.get('extractions') if isinstance(api.get('extractions'), dict) else {},
+                        '_module_name': mod['name'],  # 附加模块名信息
+                    })
+
+            if api_list:
+                result[proj_name] = api_list
+
+        return result
+
+    except Exception as e:
+        logger.error(f"从数据库读取测试数据失败: {e}")
         return {}
-    return data
 
 
 def save_test_data(data: Dict[str, Any]) -> bool:
     """
-    保存测试数据
+    保存测试数据（已废弃，数据通过各路由直接操作数据库）
+    保留函数签名以兼容调用点。
 
     Args:
         data: 测试数据字典
@@ -500,25 +541,108 @@ def save_test_data(data: Dict[str, Any]) -> bool:
     Returns:
         是否保存成功
     """
-    return YamlHandler.write_yaml(TEST_DATA_FILE, data)
+    logger.warning("save_test_data() 已废弃，数据应通过各路由直接操作数据库")
+    return True
 
 
 def get_projects() -> Dict[str, Any]:
     """
-    获取项目数据
+    获取项目数据（从数据库读取，兼容旧格式）
 
     Returns:
-        项目数据字典
+        项目数据字典，格式为 {project_name: {description, modules, envs, current_env, variables}}
     """
-    data = YamlHandler.read_yaml(PROJECTS_FILE)
-    if data is None:
+    try:
+        if not db_handler:
+            return {}
+
+        db_handler._ensure_connection()
+
+        result = {}
+        projects = db_handler.query("SELECT id, name, description FROM projects")
+
+        for proj in projects:
+            proj_name = proj['name']
+            proj_id = proj['id']
+            proj_desc = proj.get('description', '') or ''
+
+            # 获取模块
+            modules_dict = {}
+            modules = db_handler.query("SELECT id, name, description FROM modules WHERE project_id = %s ORDER BY id", (proj_id,))
+            for mod in modules:
+                mod_id = mod['id']
+                mod_name = mod['name']
+                mod_desc = mod.get('description', '') or ''
+
+                # 获取模块下的API列表
+                apis_list = []
+                apis = db_handler.query("SELECT * FROM apis WHERE module_id = %s ORDER BY id", (mod_id,))
+                for api in apis:
+                    api_item = {
+                        'case_name': api.get('case_name', ''),
+                        'url': api.get('url', ''),
+                        'method': api.get('method', 'GET'),
+                        'headers': api.get('headers') if isinstance(api.get('headers'), dict) else {},
+                        'data': api.get('data') if isinstance(api.get('data'), (dict, str)) else {},
+                        'expected': api.get('expected') if isinstance(api.get('expected'), dict) else {},
+                        'extractions': api.get('extractions') if isinstance(api.get('extractions'), dict) else {},
+                    }
+                    apis_list.append(api_item)
+
+                modules_dict[mod_name] = {
+                    'description': mod_desc,
+                    'apis': apis_list
+                }
+
+            # 获取环境配置
+            envs_dict = {}
+            envs = db_handler.query("SELECT name, base_url FROM environments WHERE project_id = %s ORDER BY id", (proj_id,))
+            for env in envs:
+                envs_dict[env['name']] = {'base_url': env.get('base_url', '')}
+
+            # 获取变量
+            variables_dict = {}
+            variables = db_handler.query("SELECT name, value FROM variables WHERE project_id = %s ORDER BY id", (proj_id,))
+            for var in variables:
+                variables_dict[var['name']] = var.get('value', '') or ''
+
+            # 获取当前环境
+            current_env = ''
+            if envs_dict:
+                # 尝试从项目描述中解析当前环境（兼容旧逻辑）
+                # 或者默认取第一个环境
+                current_env = list(envs_dict.keys())[0]
+
+            result[proj_name] = {
+                'description': proj_desc,
+                'modules': modules_dict,
+                'envs': envs_dict,
+                'current_env': current_env,
+                'variables': variables_dict
+            }
+
+        return result
+
+    except Exception as e:
+        logger.error(f"从数据库读取项目数据失败: {e}")
         return {}
-    return data
+
+
+def _get_project_current_env(project_id: int) -> str:
+    """获取项目当前激活的环境名称"""
+    try:
+        envs = db_handler.query("SELECT name FROM environments WHERE project_id = %s ORDER BY id", (project_id,))
+        if envs:
+            return envs[0]['name']
+    except Exception:
+        pass
+    return ''
 
 
 def save_projects(data: Dict[str, Any]) -> bool:
     """
-    保存项目数据
+    保存项目数据（已废弃，数据通过各路由直接操作数据库）
+    保留函数签名以兼容调用点。
 
     Args:
         data: 项目数据字典
@@ -526,7 +650,8 @@ def save_projects(data: Dict[str, Any]) -> bool:
     Returns:
         是否保存成功
     """
-    return YamlHandler.write_yaml(PROJECTS_FILE, data)
+    logger.warning("save_projects() 已废弃，数据应通过各路由直接操作数据库")
+    return True
 
 
 def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -774,12 +899,23 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
             extractions = api_data["extractions"]
             if isinstance(extractions, dict):
                 # 获取项目变量
-                projects_data = get_projects()
                 project_name = api_data.get("project", "")
                 project_variables = {}
                 
-                if project_name and project_name in projects_data:
-                    project_variables = projects_data[project_name].get("variables", {})
+                # 从数据库读取项目变量
+                if project_name and db_handler:
+                    try:
+                        db_handler._ensure_connection()
+                        # 查询项目ID
+                        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+                        if proj:
+                            proj_id = proj[0]['id']
+                            # 查询项目的所有变量
+                            vars = db_handler.query("SELECT name, value FROM variables WHERE project_id = %s", (proj_id,))
+                            project_variables = {var['name']: var['value'] for var in vars}
+                            logger.info(f"从数据库读取项目变量: {project_variables}")
+                    except Exception as e:
+                        logger.error(f"读取项目变量失败: {e}", exc_info=True)
                 
                 # 处理每个提取项
                 for var_name, extraction_config in extractions.items():
@@ -832,10 +968,36 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                                 "success": False
                             })
                 
-                # 保存项目变量
-                if project_name and project_name in projects_data:
-                    projects_data[project_name]["variables"] = project_variables
-                    save_projects(projects_data)
+                # 保存项目变量到数据库
+                if project_name and db_handler:
+                    try:
+                        db_handler._ensure_connection()
+                        # 查询项目ID
+                        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+                        if proj:
+                            proj_id = proj[0]['id']
+                            # 保存或更新每个变量
+                            for var_name, var_value in project_variables.items():
+                                # 检查变量是否已存在
+                                existing_var = db_handler.query(
+                                    "SELECT id FROM variables WHERE project_id = %s AND name = %s",
+                                    (proj_id, var_name)
+                                )
+                                if existing_var:
+                                    # 更新变量
+                                    db_handler.execute(
+                                        "UPDATE variables SET value = %s WHERE project_id = %s AND name = %s",
+                                        (str(var_value), proj_id, var_name)
+                                    )
+                                else:
+                                    # 插入新变量
+                                    db_handler.execute(
+                                        "INSERT INTO variables (project_id, name, value) VALUES (%s, %s, %s)",
+                                        (proj_id, var_name, str(var_value))
+                                    )
+                            logger.info(f"项目变量保存成功: {project_variables}")
+                    except Exception as e:
+                        logger.error(f"保存项目变量失败: {e}", exc_info=True)
 
         # 构建显示用的完整URL（对于GET请求，将params拼接到URL中显示）
         display_url = full_url
@@ -931,48 +1093,61 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
         return error_result
 
 
-def scheduled_test_job(project_name: str, module_name: str, case_index: int) -> None:
+def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None:
     """
     定时测试任务
 
     Args:
         project_name: 项目名称
         module_name: 模块名称
-        case_index: 接口索引
+        api_id: 接口ID（数据库ID）
     """
     # 获取项目级别的环境配置
     projects_data_for_env = get_projects()
     proj_env_name = ''
     if project_name in projects_data_for_env:
         proj_env_name = projects_data_for_env[project_name].get('current_env', '')
-    logger.info(f"执行定时测试: {project_name}/{module_name}[{case_index}] (当前环境: {proj_env_name or '默认'})")
+    logger.info(f"执行定时测试: {project_name}/{module_name}[{api_id}] (当前环境: {proj_env_name or '默认'})")
 
-    # 从projects.yaml中获取接口数据
-    projects_data = get_projects()
+    # 从数据库中获取接口数据
     api_data = None
 
-    if project_name and module_name:
-        if project_name in projects_data and 'modules' in projects_data[project_name]:
-            if module_name in projects_data[project_name]['modules']:
-                module_data = projects_data[project_name]['modules'][module_name]
-                if 'apis' in module_data and case_index < len(module_data['apis']):
-                    api_data = module_data['apis'][case_index]
-
-    # 如果在projects.yaml中找不到，尝试从test_data.yaml中获取
-    if not api_data:
-        test_data = get_test_data()
-        if project_name in test_data and case_index < len(test_data[project_name]):
-            api_data = test_data[project_name][case_index]
+    if project_name and module_name and api_id and db_handler:
+        try:
+            db_handler._ensure_connection()
+            # 查询项目ID
+            proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+            if proj:
+                proj_id = proj[0]['id']
+                # 查询模块ID
+                mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+                if mod:
+                    mod_id = mod[0]['id']
+                    # 查询接口
+                    api = db_handler.query("SELECT * FROM apis WHERE id = %s", (api_id,))
+                    if api:
+                        api_data = api[0]
+                        # 构造测试数据
+                        api_data = {
+                            'case_name': api_data.get('case_name', ''),
+                            'url': api_data.get('url', ''),
+                            'method': api_data.get('method', 'GET'),
+                            'headers': json.loads(api_data.get('headers', '{}')),
+                            'data': json.loads(api_data.get('data', '{}')),
+                            'expected': json.loads(api_data.get('expected', '{}')),
+                            'extractions': json.loads(api_data.get('extractions', '{}')),
+                            'project': project_name,
+                            'module': module_name,
+                            'source': '定时'
+                        }
+        except Exception as e:
+            logger.error(f"定时测试获取接口数据失败: {e}", exc_info=True)
 
     if api_data:
-        # 将项目名和模块名注入api_data，确保统计数据能正确记录所属项目和模块
-        api_data['project'] = project_name
-        api_data['module'] = module_name
-        api_data['source'] = '定时'
         result = execute_api_test(api_data)
-        logger.info(f"定时测试结果: {project_name}/{module_name}[{case_index}] - {json.dumps(result, ensure_ascii=False)}")
+        logger.info(f"定时测试结果: {project_name}/{module_name}[{api_id}] - {json.dumps(result, ensure_ascii=False)}")
     else:
-        logger.error(f"定时测试失败: 未找到接口数据 - {project_name}/{module_name}[{case_index}]")
+        logger.error(f"定时测试失败: 未找到接口数据 - {project_name}/{module_name}[{api_id}]")
 
 
 # 路由：首页
@@ -1027,389 +1202,168 @@ def api_list():
 @app.route('/projects/list')
 def projects_list():
     """项目列表"""
-    projects_data = get_projects()
-    return jsonify(projects_data)
+    logger.info("========== 开始获取项目列表 ==========")
 
+    if not db_handler:
+        logger.error("数据库未连接")
+        return jsonify({})
 
-# 路由：添加项目
-@app.route('/projects/add', methods=['POST'])
-def projects_add():
-    """添加项目"""
-    project_name = request.form.get('project_name')
-    project_desc = request.form.get('project_desc', '')
-    
-    if not project_name:
-        return jsonify({'success': False, 'error': '项目名称不能为空'})
-    
-    projects_data = get_projects()
-    
-    if project_name in projects_data:
-        return jsonify({'success': False, 'error': '项目已存在'})
-    
-    projects_data[project_name] = {
-        'description': project_desc,
-        'modules': {},
-        'envs': {},
-        'current_env': '',
-        'variables': {}
-    }
-    
-    if save_projects(projects_data):
-        return jsonify({'success': True, 'message': '项目添加成功'})
-    else:
-        return jsonify({'success': False, 'error': '项目添加失败'})
-
-
-# 路由：编辑项目
-@app.route('/projects/update', methods=['POST'])
-def projects_update():
-    """编辑项目"""
-    old_name = request.form.get('old_name')
-    project_name = request.form.get('project_name')
-    project_desc = request.form.get('project_desc', '')
-
-    if not old_name or not project_name:
-        return jsonify({'success': False, 'error': '项目名称不能为空'})
-
-    projects_data = get_projects()
-
-    if old_name not in projects_data:
-        return jsonify({'success': False, 'error': '原项目不存在'})
-
-    if old_name != project_name and project_name in projects_data:
-        return jsonify({'success': False, 'error': '项目名称已存在'})
-
-    # 如果名称变了，需要重命名（保留模块数据）
-    if old_name != project_name:
-        projects_data[project_name] = projects_data.pop(old_name)
-
-    # 更新描述
-    projects_data[project_name]['description'] = project_desc
-
-    if save_projects(projects_data):
-        # 同步更新定时任务中引用该项目名称的任务
-        _update_scheduler_project_name(old_name, project_name)
-        return jsonify({'success': True, 'message': '项目更新成功'})
-    else:
-        return jsonify({'success': False, 'error': '项目更新失败'})
-
-
-# 路由：编辑模块
-@app.route('/projects/<project_name>/modules/update', methods=['POST'])
-def modules_update(project_name):
-    """编辑模块"""
-    old_name = request.form.get('old_name')
-    module_name = request.form.get('module_name')
-    module_desc = request.form.get('module_desc', '')
-
-    if not old_name or not module_name:
-        return jsonify({'success': False, 'error': '模块名称不能为空'})
-
-    projects_data = get_projects()
-
-    if project_name not in projects_data:
-        return jsonify({'success': False, 'error': '项目不存在'})
-
-    if old_name not in projects_data[project_name]['modules']:
-        return jsonify({'success': False, 'error': '原模块不存在'})
-
-    if old_name != module_name and module_name in projects_data[project_name]['modules']:
-        return jsonify({'success': False, 'error': '模块名称已存在'})
-
-    # 如果名称变了，需要重命名（保留接口数据）
-    if old_name != module_name:
-        projects_data[project_name]['modules'][module_name] = projects_data[project_name]['modules'].pop(old_name)
-
-    # 更新描述
-    projects_data[project_name]['modules'][module_name]['description'] = module_desc
-
-    if save_projects(projects_data):
-        # 同步更新定时任务中引用该模块名称的任务
-        _update_scheduler_module_name(project_name, old_name, module_name)
-        return jsonify({'success': True, 'message': '模块更新成功'})
-    else:
-        return jsonify({'success': False, 'error': '模块更新失败'})
-
-
-def _update_scheduler_project_name(old_name, new_name):
-    """更新定时任务中引用的项目名称"""
-    if old_name == new_name:
-        return
-    changed = False
-    for job in scheduler.get_jobs():
-        if len(job.args) > 0 and job.args[0] == old_name:
-            new_args = [new_name] + list(job.args[1:])
-            new_name_job = job.name.replace(f"{old_name}/", f"{new_name}/", 1)
-            scheduler.remove_job(job.id)
-            scheduler.add_job(
-                func=scheduled_test_job,
-                trigger=job.trigger,
-                id=job.id,
-                args=new_args,
-                name=new_name_job
-            )
-            changed = True
-    if changed:
-        _save_scheduler_jobs()
-
-
-def _update_scheduler_module_name(project_name, old_name, new_name):
-    """更新定时任务中引用的模块名称"""
-    if old_name == new_name:
-        return
-    changed = False
-    for job in scheduler.get_jobs():
-        if len(job.args) > 1 and job.args[0] == project_name and job.args[1] == old_name:
-            new_args = list(job.args)
-            new_args[1] = new_name
-            new_name_job = job.name.replace(f"{project_name}/{old_name}", f"{project_name}/{new_name}", 1)
-            scheduler.remove_job(job.id)
-            scheduler.add_job(
-                func=scheduled_test_job,
-                trigger=job.trigger,
-                id=job.id,
-                args=new_args,
-                name=new_name_job
-            )
-            changed = True
-    if changed:
-        _save_scheduler_jobs()
-
-
-# 路由：删除项目
-@app.route('/projects/delete/<project_name>')
-def projects_delete(project_name):
-    """删除项目"""
-    projects_data = get_projects()
-    
-    if project_name in projects_data:
-        # 检查项目下是否还有模块
-        modules = projects_data[project_name].get('modules', {})
-        if modules and len(modules) > 0:
-            return jsonify({'success': False, 'error': '该项目下还有模块，请先删除所有模块'})
-        del projects_data[project_name]
-        if save_projects(projects_data):
-            return jsonify({'success': True, 'message': '项目删除成功'})
-        else:
-            return jsonify({'success': False, 'error': '项目删除失败'})
-    else:
-        return jsonify({'success': False, 'error': '项目不存在'})
-
-
-# 路由：添加模块
-@app.route('/projects/<project_name>/modules/add', methods=['POST'])
-def modules_add(project_name):
-    """添加模块"""
-    module_name = request.form.get('module_name')
-    module_desc = request.form.get('module_desc', '')
-    
-    if not module_name:
-        return jsonify({'success': False, 'error': '模块名称不能为空'})
-    
-    projects_data = get_projects()
-    
-    if project_name not in projects_data:
-        return jsonify({'success': False, 'error': '项目不存在'})
-    
-    if module_name in projects_data[project_name]['modules']:
-        return jsonify({'success': False, 'error': '模块已存在'})
-    
-    projects_data[project_name]['modules'][module_name] = {
-        'description': module_desc,
-        'apis': []
-    }
-    
-    if save_projects(projects_data):
-        return jsonify({'success': True, 'message': '模块添加成功'})
-    else:
-        return jsonify({'success': False, 'error': '模块添加失败'})
-
-
-# 路由：删除模块
-@app.route('/projects/<project_name>/modules/delete/<module_name>')
-def modules_delete(project_name, module_name):
-    """删除模块"""
-    projects_data = get_projects()
-    
-    if project_name in projects_data and module_name in projects_data[project_name]['modules']:
-        # 检查模块下是否还有接口
-        apis = projects_data[project_name]['modules'][module_name].get('apis', [])
-        if apis and len(apis) > 0:
-            return jsonify({'success': False, 'error': '该模块下还有接口，请先删除所有接口'})
-        del projects_data[project_name]['modules'][module_name]
-        if save_projects(projects_data):
-            return jsonify({'success': True, 'message': '模块删除成功'})
-        else:
-            return jsonify({'success': False, 'error': '模块删除失败'})
-    else:
-        return jsonify({'success': False, 'error': '项目或模块不存在'})
-
-
-# 路由：添加接口
-@app.route('/projects/<project_name>/modules/<module_name>/apis/add', methods=['POST'])
-def apis_add(project_name, module_name):
-    """添加接口"""
-    case_name = request.form.get('case_name')
-    url = request.form.get('url')
-    method = request.form.get('method')
-    headers = request.form.get('headers', '{}')
-    data = request.form.get('data', '{}')
-    expected = request.form.get('expected', '{}')
-    
-    if not all([case_name, url, method]):
-        return jsonify({'success': False, 'error': '请填写所有必填字段'})
-    
-    projects_data = get_projects()
-    
-    if project_name not in projects_data:
-        return jsonify({'success': False, 'error': '项目不存在'})
-    
-    if module_name not in projects_data[project_name]['modules']:
-        return jsonify({'success': False, 'error': '模块不存在'})
-    
     try:
-        headers_dict = json.loads(headers) if headers else {}
-        data_dict = json.loads(data) if data else {}
-        expected_dict = json.loads(expected) if expected else {}
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询所有项目
+        projects = db_handler.query("SELECT * FROM projects")
+        logger.info(f"查询到 {len(projects)} 个项目")
+
+        projects_data = {}
+        for proj in projects:
+            proj_name = proj['name']
+
+            # 查询该项目的所有模块
+            modules = db_handler.query("SELECT * FROM modules WHERE project_id = %s", (proj['id'],))
+            logger.info(f"项目 {proj_name} 查询到 {len(modules)} 个模块")
+
+            modules_data = {}
+            for mod in modules:
+                mod_name = mod['name']
+
+                # 查询该模块的所有接口
+                apis = db_handler.query("SELECT * FROM apis WHERE module_id = %s", (mod['id'],))
+                logger.info(f"模块 {mod_name} 查询到 {len(apis)} 个接口")
+
+                apis_data = []
+                for api in apis:
+                    apis_data.append({
+                        'id': api['id'],  # 添加数据库ID
+                        'case_name': api['case_name'],
+                        'url': api['url'],
+                        'method': api['method'],
+                        'headers': json.loads(api['headers']) if api['headers'] else {},
+                        'data': json.loads(api['data']) if api['data'] else {},
+                        'expected': json.loads(api['expected']) if api['expected'] else {},
+                        'extractions': json.loads(api['extractions']) if api['extractions'] else {}
+                    })
+
+                modules_data[mod_name] = {
+                    'id': mod['id'],
+                    'name': mod['name'],
+                    'description': mod['description'],
+                    'apis': apis_data
+                }
+
+            projects_data[proj_name] = {
+                'id': proj['id'],
+                'name': proj['name'],
+                'description': proj['description'],
+                'modules': modules_data
+            }
+
+        logger.info("项目列表获取成功")
+        return jsonify(projects_data)
     except Exception as e:
-        return jsonify({'success': False, 'error': f'JSON格式错误: {str(e)}'})
-    
-    api_data = {
-        'case_name': case_name,
-        'url': url,
-        'method': method,
-        'headers': headers_dict,
-        'data': data_dict,
-        'expected': expected_dict
-    }
-    
-    projects_data[project_name]['modules'][module_name]['apis'].append(api_data)
-    
-    if save_projects(projects_data):
-        # 同时保存到测试数据文件中
-        test_data = get_test_data()
-        if project_name not in test_data:
-            test_data[project_name] = []
-        test_data[project_name].append(api_data)
-        save_test_data(test_data)
-        
-        return jsonify({'success': True, 'message': '接口添加成功'})
-    else:
-        return jsonify({'success': False, 'error': '接口添加失败'})
+        logger.error(f"获取项目列表失败: {e}", exc_info=True)
+        return jsonify({})
 
 
-# 路由：获取接口详情
-@app.route('/projects/<project_name>/modules/<module_name>/apis/get/<int:api_index>')
-def apis_get(project_name, module_name, api_index):
-    """获取接口详情"""
-    projects_data = get_projects()
-
-    if project_name not in projects_data:
-        return jsonify({'error': '项目不存在'}), 404
-
-    if module_name not in projects_data[project_name]['modules']:
-        return jsonify({'error': '模块不存在'}), 404
-
-    apis = projects_data[project_name]['modules'][module_name]['apis']
-    if 0 <= api_index < len(apis):
-        api_data = apis[api_index]
-        return jsonify({
-            'project_name': project_name,
-            'module_name': module_name,
-            'api_index': api_index,
-            'case_name': api_data.get('case_name', ''),
-            'url': api_data.get('url', ''),
-            'method': api_data.get('method', 'GET'),
-            'headers': api_data.get('headers', {}),
-            'data': api_data.get('data', {}),
-            'expected': api_data.get('expected', {})
-        })
-    else:
-        return jsonify({'error': '接口索引错误'}), 404
-
-
-# 路由：更新接口
-@app.route('/projects/<project_name>/modules/<module_name>/apis/update/<int:api_index>', methods=['POST'])
-def apis_update(project_name, module_name, api_index):
-    """更新接口"""
-    case_name = request.form.get('case_name')
-    url = request.form.get('url')
-    method = request.form.get('method')
-    headers = request.form.get('headers', '{}')
-    data = request.form.get('data', '{}')
-    expected = request.form.get('expected', '{}')
-    extractions = request.form.get('extractions', '{}')
-
-    if not all([case_name, url, method]):
-        return jsonify({'success': False, 'error': '请填写所有必填字段'})
-
-    projects_data = get_projects()
-
-    if project_name not in projects_data:
-        return jsonify({'success': False, 'error': '项目不存在'})
-
-    if module_name not in projects_data[project_name]['modules']:
-        return jsonify({'success': False, 'error': '模块不存在'})
-
-    try:
-        headers_dict = json.loads(headers) if headers else {}
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'请求头JSON格式错误: {str(e)}'})
-
-    try:
-        data_dict = json.loads(data) if data else {}
-    except Exception:
-        # 如果不是有效JSON，将原始文本作为字符串值保存
-        data_dict = data if data else {}
-
-    try:
-        expected_dict = json.loads(expected) if expected else {}
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'断言JSON格式错误: {str(e)}'})
-
-    try:
-        extractions_dict = json.loads(extractions) if extractions else {}
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'提取配置JSON格式错误: {str(e)}'})
-
-    apis = projects_data[project_name]['modules'][module_name]['apis']
-    if 0 <= api_index < len(apis):
-        apis[api_index] = {
-            'case_name': case_name,
-            'url': url,
-            'method': method,
-            'headers': headers_dict,
-            'data': data_dict,
-            'expected': expected_dict,
-            'extractions': extractions_dict
-        }
-
-        if save_projects(projects_data):
-            return jsonify({'success': True, 'message': '接口更新成功'})
-        else:
-            return jsonify({'success': False, 'error': '接口更新失败'})
-    else:
-        return jsonify({'success': False, 'error': '接口索引错误'})
-
-
-# 路由：删除接口
-@app.route('/projects/<project_name>/modules/<module_name>/apis/delete/<int:api_index>')
-def apis_delete(project_name, module_name, api_index):
+@app.route('/projects/<project_name>/modules/<module_name>/apis/delete/<int:api_id>')
+def apis_delete(project_name, module_name, api_id):
     """删除接口"""
-    projects_data = get_projects()
-    
-    if project_name in projects_data and module_name in projects_data[project_name]['modules']:
-        if 0 <= api_index < len(projects_data[project_name]['modules'][module_name]['apis']):
-            projects_data[project_name]['modules'][module_name]['apis'].pop(api_index)
-            
-            if save_projects(projects_data):
-                return jsonify({'success': True, 'message': '接口删除成功'})
-            else:
-                return jsonify({'success': False, 'error': '接口删除失败'})
-        else:
-            return jsonify({'success': False, 'error': '接口索引错误'})
-    else:
-        return jsonify({'success': False, 'error': '项目或模块不存在'})
+    logger.info(f"========== 开始删除接口 ==========")
+    logger.info(f"项目名称: {project_name}, 模块名称: {module_name}, 接口ID: {api_id}")
+
+    if not db_handler:
+        logger.error("数据库未连接")
+        return jsonify({'success': False, 'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {project_name}")
+            return jsonify({'success': False, 'error': '项目不存在'})
+        proj_id = proj[0]['id']
+
+        # 查询模块ID
+        mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+        if not mod:
+            logger.warning(f"模块不存在: {module_name}")
+            return jsonify({'success': False, 'error': '模块不存在'})
+        mod_id = mod[0]['id']
+
+        # 查询接口是否存在
+        api = db_handler.query("SELECT * FROM apis WHERE id = %s", (api_id,))
+        if not api:
+            logger.warning(f"接口不存在: {api_id}")
+            return jsonify({'success': False, 'error': '接口不存在'})
+
+        # 删除接口
+        db_handler.execute("DELETE FROM apis WHERE id = %s", (api_id,))
+        logger.info("接口删除成功")
+
+        return jsonify({'success': True, 'message': '接口删除成功'})
+    except Exception as e:
+        logger.error(f"删除接口失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'接口删除失败: {str(e)}'})
+
+
+# 路由：获取单个接口数据
+@app.route('/projects/<project_name>/modules/<module_name>/apis/get/<int:api_id>')
+def apis_get(project_name, module_name, api_id):
+    """获取单个接口数据"""
+    logger.info(f"========== 开始获取接口数据 ==========")
+    logger.info(f"项目名称: {project_name}, 模块名称: {module_name}, 接口ID: {api_id}")
+
+    if not db_handler:
+        logger.error("数据库未连接")
+        return jsonify({'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {project_name}")
+            return jsonify({'error': '项目不存在'})
+        proj_id = proj[0]['id']
+
+        # 查询模块ID
+        mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+        if not mod:
+            logger.warning(f"模块不存在: {module_name}")
+            return jsonify({'error': '模块不存在'})
+        mod_id = mod[0]['id']
+
+        # 查询接口
+        api = db_handler.query("SELECT * FROM apis WHERE id = %s", (api_id,))
+        if not api:
+            logger.warning(f"接口不存在: {api_id}")
+            return jsonify({'error': '接口不存在'})
+
+        api_data = api[0]
+        logger.info(f"获取接口数据: {api_data}")
+
+        # 返回接口数据
+        return jsonify({
+            'id': api_data.get('id'),
+            'case_name': api_data.get('case_name'),
+            'url': api_data.get('url'),
+            'method': api_data.get('method'),
+            'headers': json.loads(api_data.get('headers', '{}')),
+            'data': json.loads(api_data.get('data', '{}')),
+            'expected': json.loads(api_data.get('expected', '{}')),
+            'extractions': json.loads(api_data.get('extractions', '{}')),
+            'project_name': project_name,
+            'module_name': module_name
+        })
+    except Exception as e:
+        logger.error(f"获取接口数据失败: {e}", exc_info=True)
+        return jsonify({'error': f'获取接口数据失败: {str(e)}'})
 
 
 # 路由：添加API
@@ -1568,7 +1522,7 @@ def scheduler_list():
         # 从job.args中提取参数
         project_name = job.args[0] if len(job.args) > 0 else ''
         module_name = job.args[1] if len(job.args) > 1 else ''
-        case_index = job.args[2] if len(job.args) > 2 else 0
+        api_id = job.args[2] if len(job.args) > 2 else 0
 
         # 从trigger中提取cron表达式
         cron_expression = _extract_cron_expression(job.trigger)
@@ -1580,7 +1534,7 @@ def scheduler_list():
             'trigger': str(job.trigger),
             'project_name': project_name,
             'module_name': module_name,
-            'case_index': case_index,
+            'api_id': api_id,
             'cron_expression': cron_expression
         })
     return jsonify(jobs)
@@ -1592,7 +1546,7 @@ def scheduler_add():
     """添加定时任务"""
     project_name = request.form.get('project_name')
     module_name = request.form.get('module_name')
-    case_index = int(request.form.get('case_index', 0))
+    api_id = int(request.form.get('api_id', 0))
     cron_expression = request.form.get('cron_expression')
 
     try:
@@ -1603,25 +1557,28 @@ def scheduler_add():
         if module_name:
             module_name = unquote(module_name)
 
-        # 从projects.yaml中获取接口数据
-        projects_data = get_projects()
+        # 从数据库中获取接口数据
         api_data = None
+        if project_name and module_name and api_id and db_handler:
+            try:
+                db_handler._ensure_connection()
+                # 查询项目ID
+                proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+                if proj:
+                    proj_id = proj[0]['id']
+                    # 查询模块ID
+                    mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+                    if mod:
+                        mod_id = mod[0]['id']
+                        # 查询接口
+                        api = db_handler.query("SELECT * FROM apis WHERE id = %s", (api_id,))
+                        if api:
+                            api_data = api[0]
+            except Exception as e:
+                logger.error(f"获取接口数据失败: {e}", exc_info=True)
 
-        if project_name and module_name:
-            if project_name in projects_data and 'modules' in projects_data[project_name]:
-                if module_name in projects_data[project_name]['modules']:
-                    module_data = projects_data[project_name]['modules'][module_name]
-                    if 'apis' in module_data and case_index < len(module_data['apis']):
-                        api_data = module_data['apis'][case_index]
-
-        # 如果在projects.yaml中找不到，尝试从test_data.yaml中获取
         if not api_data:
-            test_data = get_test_data()
-            if project_name in test_data and case_index < len(test_data[project_name]):
-                api_data = test_data[project_name][case_index]
-
-        if not api_data:
-            return jsonify({'success': False, 'message': 'API不存在或索引错误'}), 400
+            return jsonify({'success': False, 'message': 'API不存在或ID错误'}), 400
 
         # 校验cron表达式格式
         cron_fields = cron_expression.strip().split()
@@ -1629,14 +1586,14 @@ def scheduler_add():
             return jsonify({'success': False, 'message': f'Cron表达式格式错误：需要5个字段（分 时 日 月 周），当前只有{len(cron_fields)}个字段。示例：0 * * * * 表示每小时执行'}), 400
 
         # 创建任务ID
-        job_id = f"{project_name}_{module_name}_{case_index}_{int(time.time())}"
+        job_id = f"{project_name}_{module_name}_{api_id}_{int(time.time())}"
 
         # 添加定时任务
         scheduler.add_job(
             func=scheduled_test_job,
             trigger=CronTrigger.from_crontab(cron_expression),
             id=job_id,
-            args=[project_name, module_name, case_index],
+            args=[project_name, module_name, api_id],
             name=f"{project_name}/{module_name} - {api_data.get('case_name', '未命名')}"
         )
 
@@ -1659,7 +1616,7 @@ def scheduler_update():
     job_id = request.form.get('job_id')
     project_name = request.form.get('project_name')
     module_name = request.form.get('module_name')
-    case_index = int(request.form.get('case_index', 0))
+    api_id = int(request.form.get('api_id', 0))
     cron_expression = request.form.get('cron_expression')
 
     try:
@@ -1684,7 +1641,7 @@ def scheduler_update():
             func=scheduled_test_job,
             trigger=CronTrigger.from_crontab(cron_expression),
             id=job_id,
-            args=[project_name, module_name, case_index],
+            args=[project_name, module_name, api_id],
             name=job_name
         )
 
@@ -1812,9 +1769,10 @@ def statistics_list():
         m = r.get('method', 'UNKNOWN')
         method_dist[m] = method_dist.get(m, 0) + 1
 
-    # 响应时间趋势（最近50条）
+    # 响应时间趋势（最近50条，按时间升序排列用于图表展示）
     trend_data = []
-    for r in reversed(filtered[-50:]):
+    recent_50 = filtered[:50]  # filtered已按最新在前排序，取前50条即最近50条
+    for r in reversed(recent_50):  # 反转为时间升序，适合图表从左到右展示
         if r.get('response_time') is not None:
             trend_data.append({
                 'time': r.get('timestamp', ''),
@@ -1825,8 +1783,7 @@ def statistics_list():
     assertion_total = sum(r.get('assertion_count', 0) for r in filtered)
     assertion_passed_total = sum(r.get('assertion_passed_count', 0) for r in filtered)
 
-    # 分页（倒序，最新的在前）
-    filtered.reverse()
+    # 数据已按 id DESC 排序（最新的在前），无需再反转
     total_pages = max(1, (total + page_size - 1) // page_size)
     page = min(page, total_pages)
     start = (page - 1) * page_size
@@ -2339,43 +2296,66 @@ def test_execute_module(project_name, module_name):
 
 
 # 路由：执行测试
-@app.route('/test/execute/<project_name>/<module_name>/<int:case_index>')
-def test_execute(project_name, module_name, case_index):
+@app.route('/test/execute/<project_name>/<module_name>/<int:api_id>')
+def test_execute(project_name, module_name, api_id):
     """执行测试"""
-    # 版本标记V2 - 用于验证代码是否更新
+    logger.info(f"========== 开始执行测试 ==========")
+    logger.info(f"项目名称: {project_name}, 模块名称: {module_name}, 接口ID: {api_id}")
+
     # 对URL编码的参数进行解码
     from urllib.parse import unquote
     project_name = unquote(project_name)
     module_name = unquote(module_name)
 
-    # 从projects.yaml中获取接口数据
-    projects_data = get_projects()
-
-    # 查找对应的接口数据
-    api_data = None
-    if project_name in projects_data and 'modules' in projects_data[project_name]:
-        if module_name in projects_data[project_name]['modules']:
-            module_data = projects_data[project_name]['modules'][module_name]
-            if 'apis' in module_data and case_index < len(module_data['apis']):
-                api_data = module_data['apis'][case_index]
-
-    # 如果在projects.yaml中找不到，尝试从test_data.yaml中获取
-    if not api_data:
-        test_data = get_test_data()
-        if project_name in test_data and case_index < len(test_data[project_name]):
-            api_data = test_data[project_name][case_index]
-
-    if not api_data:
-        return jsonify({"error": "API不存在或索引错误", "success": False})
-
-    # 将项目名和模块名注入api_data，确保统计数据能正确记录所属项目和模块
-    api_data['project'] = project_name
-    api_data['module'] = module_name
-    api_data['source'] = '执行'
+    if not db_handler:
+        logger.error("数据库未连接")
+        return jsonify({"error": "数据库未连接", "success": False})
 
     try:
-        logger.debug(f"api_data type: {type(api_data)}, api_data: {api_data}")
-        result = execute_api_test(api_data)
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {project_name}")
+            return jsonify({"error": "项目不存在", "success": False})
+        proj_id = proj[0]['id']
+
+        # 查询模块ID
+        mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+        if not mod:
+            logger.warning(f"模块不存在: {module_name}")
+            return jsonify({"error": "模块不存在", "success": False})
+        mod_id = mod[0]['id']
+
+        # 查询接口
+        api = db_handler.query("SELECT * FROM apis WHERE id = %s", (api_id,))
+        if not api:
+            logger.warning(f"接口不存在: {api_id}")
+            return jsonify({"error": "接口不存在", "success": False})
+
+        api_data = api[0]
+        logger.info(f"获取接口数据: {api_data}")
+
+        # 构造测试数据
+        test_data = {
+            'case_name': api_data.get('case_name', ''),
+            'url': api_data.get('url', ''),
+            'method': api_data.get('method', 'GET'),
+            'headers': json.loads(api_data.get('headers', '{}')),
+            'data': json.loads(api_data.get('data', '{}')),
+            'expected': json.loads(api_data.get('expected', '{}')),
+            'extractions': json.loads(api_data.get('extractions', '{}')),
+            'project': project_name,
+            'module': module_name,
+            'source': '执行'
+        }
+
+        logger.info(f"测试数据: {test_data}")
+
+        # 执行测试
+        result = execute_api_test(test_data)
         return jsonify(result)
     except Exception as e:
         import traceback
@@ -2386,8 +2366,6 @@ def test_execute(project_name, module_name, case_index):
             debug_path = os.path.join(BASE_DIR, 'debug_error.log')
             with open(debug_path, 'w', encoding='utf-8') as f:
                 f.write(f"=== test_execute路由异常 ===\n")
-                f.write(f"api_data type: {type(api_data)}\n")
-                f.write(f"api_data: {api_data}\n")
                 f.write(f"error: {e}\n")
                 f.write(f"traceback:\n{tb_str}\n")
         except Exception:

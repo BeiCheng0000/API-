@@ -403,12 +403,21 @@ function addModule() {
     formData.append('module_name', moduleName);
     formData.append('module_desc', moduleDesc);
 
+    console.log(`准备添加模块: 项目=${projectName}, 模块=${moduleName}, 描述=${moduleDesc}`);
+
     fetch(`/projects/${projectName}/modules/add`, {
         method: 'POST',
         body: formData
     })
-    .then(response => response.json())
+    .then(response => {
+        console.log(`收到响应: status=${response.status}, ok=${response.ok}`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    })
     .then(result => {
+        console.log(`解析JSON结果:`, result);
         if (result.success) {
             showToast('成功', result.message, 'success');
             bootstrap.Modal.getInstance(document.getElementById('addModuleModal')).hide();
@@ -419,6 +428,7 @@ function addModule() {
         }
     })
     .catch(error => {
+        console.error('添加模块失败:', error);
         showToast('错误', '添加模块失败: ' + error.message, 'danger');
     });
 }
@@ -554,6 +564,7 @@ function loadApisList(projectName, moduleName) {
             apisHtml += '<div class="api-list">';
             for (let i = 0; i < apis.length; i++) {
                 const api = apis[i];
+                const apiId = api.id;  // 使用数据库ID
                 const safeMethod = escapeHtml(api.method);
                 const safeCaseName = escapeHtml(api.case_name);
                 const safeUrl = escapeHtml(api.url);
@@ -567,11 +578,11 @@ function loadApisList(projectName, moduleName) {
                             </div>
                         </div>
                         <div class="api-actions">
-                            <button type="button" class="btn btn-icon btn-icon-sm btn-soft-primary" data-project="${safeProjectName}" data-module="${safeModuleName}" data-index="${i}" onclick="debugApi(this.dataset.project, this.dataset.module, parseInt(this.dataset.index))" title="调试"><i class="bi bi-bug"></i></button>
-                            <button type="button" class="btn btn-icon btn-icon-sm btn-soft-warning" data-project="${safeProjectName}" data-module="${safeModuleName}" data-index="${i}" onclick="editApi(this.dataset.project, this.dataset.module, parseInt(this.dataset.index))" title="编辑"><i class="bi bi-pencil"></i></button>
-                            <button type="button" class="btn btn-icon btn-icon-sm btn-soft-success" data-project="${safeProjectName}" data-module="${safeModuleName}" data-index="${i}" onclick="executeTest(this.dataset.project, this.dataset.module, parseInt(this.dataset.index))" title="执行"><i class="bi bi-play-fill"></i></button>
-                            <button type="button" class="btn btn-icon btn-icon-sm btn-soft-primary" data-project="${safeProjectName}" data-module="${safeModuleName}" data-index="${i}" onclick="showSchedulerModal(this.dataset.project, this.dataset.module, parseInt(this.dataset.index))" title="定时任务"><i class="bi bi-clock"></i></button>
-                            <button type="button" class="btn btn-icon btn-icon-sm btn-soft-danger" data-project="${safeProjectName}" data-module="${safeModuleName}" data-index="${i}" onclick="deleteApi(this.dataset.project, this.dataset.module, parseInt(this.dataset.index))" title="删除"><i class="bi bi-trash3"></i></button>
+                            <button type="button" class="btn btn-icon btn-icon-sm btn-soft-primary" data-project="${safeProjectName}" data-module="${safeModuleName}" data-id="${apiId}" onclick="debugApi(this.dataset.project, this.dataset.module, this.dataset.id)" title="调试"><i class="bi bi-bug"></i></button>
+                            <button type="button" class="btn btn-icon btn-icon-sm btn-soft-warning" data-project="${safeProjectName}" data-module="${safeModuleName}" data-id="${apiId}" onclick="editApi(this.dataset.project, this.dataset.module, this.dataset.id)" title="编辑"><i class="bi bi-pencil"></i></button>
+                            <button type="button" class="btn btn-icon btn-icon-sm btn-soft-success" data-project="${safeProjectName}" data-module="${safeModuleName}" data-id="${apiId}" onclick="executeTest(this.dataset.project, this.dataset.module, this.dataset.id)" title="执行"><i class="bi bi-play-fill"></i></button>
+                            <button type="button" class="btn btn-icon btn-icon-sm btn-soft-primary" data-project="${safeProjectName}" data-module="${safeModuleName}" data-id="${apiId}" onclick="showSchedulerModal(this.dataset.project, this.dataset.module, this.dataset.id)" title="定时任务"><i class="bi bi-clock"></i></button>
+                            <button type="button" class="btn btn-icon btn-icon-sm btn-soft-danger" data-project="${safeProjectName}" data-module="${safeModuleName}" data-id="${apiId}" onclick="deleteApi(this.dataset.project, this.dataset.module, this.dataset.id)" title="删除"><i class="bi bi-trash3"></i></button>
                         </div>
                     </div>
                 `;
@@ -586,6 +597,7 @@ function loadApisList(projectName, moduleName) {
         showToast('错误', '加载接口列表失败: ' + error.message, 'danger');
     });
 }
+
 
 /**
  * 加载模块列表（兼容性入口）
@@ -748,12 +760,12 @@ function deleteModule(projectName, moduleName) {
  * @param {string} moduleName - 模块名称
  * @param {number} apiIndex - 接口索引
  */
-function deleteApi(projectName, moduleName, apiIndex) {
+function deleteApi(projectName, moduleName, apiId) {
     if (!confirm('确定要删除这个接口吗？')) {
         return;
     }
 
-    fetch(`/projects/${projectName}/modules/${moduleName}/apis/delete/${apiIndex}`)
+    fetch(`/projects/${projectName}/modules/${moduleName}/apis/delete/${apiId}`)
     .then(response => response.json())
     .then(result => {
         if (result.success) {
@@ -905,7 +917,7 @@ function loadSchedulerJobsByModule(projectName, moduleName) {
                     <td>${job.next_run_time || '未知'}</td>
                     <td><code>${escapeHtml(job.cron_expression || job.trigger)}</code></td>
                     <td>
-                        <button class="btn btn-sm btn-warning me-1" onclick="editScheduler('${job.id}','${escapeHtml(job.project_name)}','${escapeHtml(job.module_name)}',${job.case_index},'${escapeHtml(job.cron_expression)}')" title="编辑"><i class="bi bi-pencil"></i></button>
+                        <button class="btn btn-sm btn-warning me-1" onclick="editScheduler('${job.id}','${escapeHtml(job.project_name)}','${escapeHtml(job.module_name)}',${job.api_id},'${escapeHtml(job.cron_expression)}')" title="编辑"><i class="bi bi-pencil"></i></button>
                         <button class="btn btn-sm btn-danger" onclick="deleteScheduler('${job.id}')" title="删除"><i class="bi bi-trash"></i></button>
                     </td>
                 </tr>`;
@@ -953,12 +965,12 @@ function loadSchedulerList() {
  * @param {string} moduleName - 模块名称
  * @param {number} caseIndex - 用例索引
  */
-function showSchedulerModal(projectName, moduleName, caseIndex) {
+function showSchedulerModal(projectName, moduleName, apiId) {
     // 重置为添加模式
     document.getElementById('schedulerJobId').value = '';
     document.getElementById('schedulerProjectName').value = projectName;
     document.getElementById('schedulerModuleName').value = moduleName;
-    document.getElementById('schedulerCaseIndex').value = caseIndex;
+    document.getElementById('schedulerCaseIndex').value = apiId;
     document.getElementById('cronExpression').value = '';
     document.getElementById('schedulerModalTitle').innerHTML = '<i class="bi bi-clock me-2"></i>添加定时任务';
     document.getElementById('schedulerSubmitBtn').innerHTML = '<i class="bi bi-check-lg me-1"></i>确定';
@@ -972,7 +984,7 @@ function showSchedulerModal(projectName, moduleName, caseIndex) {
  * @param {string} jobId - 任务ID
  * @param {string} projectName - 项目名称
  * @param {string} moduleName - 模块名称
- * @param {number} caseIndex - 用例索引
+ * @param {number} apiId - 接口ID
  * @param {string} cronExpression - 当前Cron表达式
  */
 function editScheduler(jobId, projectName, moduleName, caseIndex, cronExpression) {
@@ -1026,7 +1038,7 @@ function addScheduler() {
     const formData = new FormData();
     formData.append('project_name', projectName);
     formData.append('module_name', moduleName);
-    formData.append('case_index', caseIndex);
+    formData.append('api_id', caseIndex);
     formData.append('cron_expression', cronExpression);
 
     // 发送请求
@@ -1086,7 +1098,7 @@ function updateScheduler() {
     formData.append('job_id', jobId);
     formData.append('project_name', projectName);
     formData.append('module_name', moduleName);
-    formData.append('case_index', caseIndex);
+    formData.append('api_id', caseIndex);
     formData.append('cron_expression', cronExpression);
 
     // 发送请求
@@ -1310,11 +1322,11 @@ function setApiAssertions(assertions, containerId = 'apiAssertionContainer') {
  * 编辑API
  * @param {string} projectName - 项目名称
  * @param {string} moduleName - 模块名称
- * @param {number} apiIndex - 接口索引
+ * @param {number} apiId - 接口ID（数据库ID）
  */
-function editApi(projectName, moduleName, apiIndex) {
-    // 从服务器获取API数据（从projects.yaml）
-    fetch(`/projects/${projectName}/modules/${moduleName}/apis/get/${apiIndex}`)
+function editApi(projectName, moduleName, apiId) {
+    // 从服务器获取API数据
+    fetch(`/projects/${projectName}/modules/${moduleName}/apis/get/${apiId}`)
         .then(response => response.json())
         .then(apiData => {
             if (apiData.error) {
@@ -1439,12 +1451,12 @@ function runModuleTests(projectName, moduleName) {
  * @param {string} apiName - API名称
  * @param {number} caseIndex - 用例索引
  */
-function executeTest(projectName, moduleName, caseIndex) {
+function executeTest(projectName, moduleName, apiId) {
     // 对模块名称进行URL编码，处理中文等特殊字符
     const encodedModuleName = encodeURIComponent(moduleName);
     const encodedProjectName = encodeURIComponent(projectName);
 
-    fetch(`/test/execute/${encodedProjectName}/${encodedModuleName}/${caseIndex}`)
+    fetch(`/test/execute/${encodedProjectName}/${encodedModuleName}/${apiId}`)
         .then(response => {
             console.log('[DEBUG] HTTP status:', response.status);
             return response.text().then(text => {
@@ -1625,57 +1637,30 @@ function fillDebugForm(apiData, projectName, moduleName) {
 
 /**
  * 调试API
- * @param {string} apiName - API名称
- * @param {number} caseIndex - 用例索引
+ * @param {string} projectName - 项目名称
+ * @param {string} moduleName - 模块名称
+ * @param {number} apiId - 接口ID（数据库ID）
  */
-function debugApi(projectName, moduleName, caseIndex) {
-    // 兼容旧的2参数调用方式: debugApi(apiName, caseIndex)
+function debugApi(projectName, moduleName, apiId) {
+    // 兼容旧的2参数调用方式
     if (arguments.length === 2 && typeof moduleName === 'number') {
-        caseIndex = moduleName;
+        apiId = moduleName;
         moduleName = undefined;
     }
 
     // 模式1：从项目列表点击调试，填充表单数据并跳转到调试页
-    if (projectName && caseIndex !== undefined) {
-        // 从projects数据源获取API数据
-        fetch('/projects/list')
+    if (projectName && apiId !== undefined) {
+        // 从服务器获取API数据
+        fetch(`/projects/${projectName}/modules/${moduleName}/apis/get/${apiId}`)
             .then(response => response.json())
-            .then(projectsData => {
-                let apiData = null;
-                let foundProjectName = '';
-                let foundModuleName = '';
-
-                // 如果指定了模块名，直接定位
-                if (projectsData[projectName] && projectsData[projectName].modules && moduleName) {
-                    const modData = projectsData[projectName].modules[moduleName];
-                    if (modData && modData.apis && modData.apis[caseIndex]) {
-                        apiData = modData.apis[caseIndex];
-                        foundProjectName = projectName;
-                        foundModuleName = moduleName;
-                    }
-                }
-
-                // 未指定模块名时，遍历查找
-                if (!apiData) {
-                    for (const [projName, projData] of Object.entries(projectsData)) {
-                        if (projData.modules) {
-                            for (const [modName, modData] of Object.entries(projData.modules)) {
-                                if (modData.apis && modData.apis[caseIndex]) {
-                                    if (projName === projectName) {
-                                        apiData = modData.apis[caseIndex];
-                                        foundProjectName = projName;
-                                        foundModuleName = modName;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if (apiData) break;
-                    }
+            .then(apiData => {
+                if (apiData.error) {
+                    showToast('错误', apiData.error, 'danger');
+                    return;
                 }
 
                 if (apiData) {
-                    fillDebugForm(apiData, foundProjectName, foundModuleName);
+                    fillDebugForm(apiData, projectName, moduleName);
                 } else {
                     showToast('错误', '未找到接口数据', 'danger');
                 }
@@ -1685,6 +1670,7 @@ function debugApi(projectName, moduleName, caseIndex) {
             });
         return; // 填充模式，不执行发送
     }
+
 
     // 模式2：直接发送调试请求
     const apiUrl = document.getElementById('apiUrl').value;
