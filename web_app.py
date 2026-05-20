@@ -1198,6 +1198,137 @@ def api_list():
     return jsonify(test_data)
 
 
+# 路由：添加项目
+@app.route('/projects/add', methods=['POST'])
+def project_add():
+    """添加项目"""
+    project_name = request.form.get('project_name', '').strip()
+    project_desc = request.form.get('project_desc', '').strip()
+
+    logger.info(f"========== 开始添加项目 ==========")
+    logger.info(f"项目名称: {project_name}, 描述: {project_desc}")
+
+    if not project_name:
+        return jsonify({'success': False, 'error': '项目名称不能为空'})
+
+    if not db_handler:
+        return jsonify({'success': False, 'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 检查项目是否已存在
+        existing = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if existing:
+            logger.warning(f"项目已存在: {project_name}")
+            return jsonify({'success': False, 'error': '项目已存在'})
+
+        # 添加项目
+        db_handler.execute(
+            "INSERT INTO projects (name, description) VALUES (%s, %s)",
+            (project_name, project_desc)
+        )
+        logger.info("项目添加成功")
+
+        return jsonify({'success': True, 'message': '项目添加成功'})
+    except Exception as e:
+        logger.error(f"添加项目失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'添加项目失败: {str(e)}'})
+
+
+# 路由：删除项目
+@app.route('/projects/delete/<project_name>', methods=['POST'])
+def project_delete(project_name):
+    """删除项目"""
+    from urllib.parse import unquote
+    project_name = unquote(project_name)
+    logger.info(f"========== 开始删除项目 ==========")
+    logger.info(f"项目名称: {project_name}")
+
+    if not db_handler:
+        logger.error("数据库未连接")
+        return jsonify({'success': False, 'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {project_name}")
+            return jsonify({'success': False, 'error': '项目不存在'})
+        proj_id = proj[0]['id']
+
+        # 删除项目下的所有模块的接口
+        modules = db_handler.query("SELECT id FROM modules WHERE project_id = %s", (proj_id,))
+        for mod in modules:
+            db_handler.execute("DELETE FROM apis WHERE module_id = %s", (mod['id'],))
+        logger.info("项目下的接口删除成功")
+
+        # 删除项目下的所有模块
+        db_handler.execute("DELETE FROM modules WHERE project_id = %s", (proj_id,))
+        logger.info("项目下的模块删除成功")
+
+        # 删除项目
+        db_handler.execute("DELETE FROM projects WHERE id = %s", (proj_id,))
+        logger.info("项目删除成功")
+
+        return jsonify({'success': True, 'message': '项目删除成功'})
+    except Exception as e:
+        logger.error(f"删除项目失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'删除项目失败: {str(e)}'})
+
+
+# 路由：更新项目
+@app.route('/projects/update', methods=['POST'])
+def project_update():
+    """更新项目"""
+    old_name = request.form.get('old_name', '').strip()
+    project_name = request.form.get('project_name', '').strip()
+    project_desc = request.form.get('project_desc', '').strip()
+
+    logger.info(f"========== 开始更新项目 ==========")
+    logger.info(f"旧项目名称: {old_name}, 新项目名称: {project_name}, 描述: {project_desc}")
+
+    if not project_name:
+        return jsonify({'success': False, 'error': '项目名称不能为空'})
+
+    if not db_handler:
+        return jsonify({'success': False, 'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (old_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {old_name}")
+            return jsonify({'success': False, 'error': '项目不存在'})
+        proj_id = proj[0]['id']
+
+        # 如果修改了项目名称，检查新名称是否已存在
+        if old_name != project_name:
+            existing = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+            if existing:
+                logger.warning(f"项目已存在: {project_name}")
+                return jsonify({'success': False, 'error': '项目已存在'})
+
+        # 更新项目
+        db_handler.execute(
+            "UPDATE projects SET name = %s, description = %s WHERE id = %s",
+            (project_name, project_desc, proj_id)
+        )
+        logger.info("项目更新成功")
+
+        return jsonify({'success': True, 'message': '项目更新成功'})
+    except Exception as e:
+        logger.error(f"更新项目失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'更新项目失败: {str(e)}'})
+
+
 # 路由：项目列表
 @app.route('/projects/list')
 def projects_list():
@@ -1358,6 +1489,62 @@ def module_add(project_name):
         return jsonify({'success': False, 'error': f'添加模块失败: {str(e)}'})
 
 
+@app.route('/projects/<project_name>/modules/update', methods=['POST'])
+def module_update(project_name):
+    """更新模块"""
+    from urllib.parse import unquote
+    project_name = unquote(project_name)
+    old_name = request.form.get('old_name', '').strip()
+    module_name = request.form.get('module_name', '').strip()
+    module_desc = request.form.get('module_desc', '').strip()
+
+    logger.info(f"========== 开始更新模块 ==========")
+    logger.info(f"项目名称: {project_name}, 旧模块名称: {old_name}, 新模块名称: {module_name}, 描述: {module_desc}")
+
+    if not module_name:
+        return jsonify({'success': False, 'error': '模块名称不能为空'})
+
+    if not db_handler:
+        return jsonify({'success': False, 'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {project_name}")
+            return jsonify({'success': False, 'error': '项目不存在'})
+        proj_id = proj[0]['id']
+
+        # 查询模块ID
+        mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, old_name))
+        if not mod:
+            logger.warning(f"模块不存在: {old_name}")
+            return jsonify({'success': False, 'error': '模块不存在'})
+        mod_id = mod[0]['id']
+
+        # 如果修改了模块名称，检查新名称是否已存在
+        if old_name != module_name:
+            existing = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+            if existing:
+                logger.warning(f"模块已存在: {module_name}")
+                return jsonify({'success': False, 'error': '模块已存在'})
+
+        # 更新模块
+        db_handler.execute(
+            "UPDATE modules SET name = %s, description = %s WHERE id = %s",
+            (module_name, module_desc, mod_id)
+        )
+        logger.info("模块更新成功")
+
+        return jsonify({'success': True, 'message': '模块更新成功'})
+    except Exception as e:
+        logger.error(f"更新模块失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'更新模块失败: {str(e)}'})
+
+
 @app.route('/projects/<project_name>/modules/<module_name>/apis/add', methods=['POST'])
 def api_add(project_name, module_name):
     """添加接口"""
@@ -1433,6 +1620,89 @@ def api_add(project_name, module_name):
     except Exception as e:
         logger.error(f"添加接口失败: {e}", exc_info=True)
         return jsonify({'success': False, 'error': f'添加接口失败: {str(e)}'})
+
+
+@app.route('/projects/<project_name>/modules/<module_name>/apis/update/<int:api_id>', methods=['POST'])
+def api_update(project_name, module_name, api_id):
+    """更新接口"""
+    from urllib.parse import unquote
+    project_name = unquote(project_name)
+    module_name = unquote(module_name)
+    case_name = request.form.get('case_name', '').strip()
+    url = request.form.get('url', '').strip()
+    method = request.form.get('method', 'GET').strip()
+    headers = request.form.get('headers', '{}').strip()
+    data = request.form.get('data', '{}').strip()
+    expected = request.form.get('expected', '{}').strip()
+    extractions = request.form.get('extractions', '{}').strip()
+
+    logger.info(f"========== 开始更新接口 ==========")
+    logger.info(f"项目名称: {project_name}, 模块名称: {module_name}, 接口ID: {api_id}, 接口名称: {case_name}")
+
+    if not case_name:
+        return jsonify({'success': False, 'error': '接口名称不能为空'})
+    if not url:
+        return jsonify({'success': False, 'error': 'URL不能为空'})
+
+    if not db_handler:
+        return jsonify({'success': False, 'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {project_name}")
+            return jsonify({'success': False, 'error': '项目不存在'})
+        proj_id = proj[0]['id']
+
+        # 查询模块ID
+        mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+        if not mod:
+            logger.warning(f"模块不存在: {module_name}")
+            return jsonify({'success': False, 'error': '模块不存在'})
+        mod_id = mod[0]['id']
+
+        # 查询接口是否存在
+        api = db_handler.query("SELECT * FROM apis WHERE id = %s", (api_id,))
+        if not api:
+            logger.warning(f"接口不存在: {api_id}")
+            return jsonify({'success': False, 'error': '接口不存在'})
+
+        # 解析JSON数据
+        try:
+            headers_dict = json.loads(headers) if headers else {}
+        except json.JSONDecodeError:
+            headers_dict = {}
+
+        try:
+            data_dict = json.loads(data) if data else {}
+        except json.JSONDecodeError:
+            data_dict = {}
+
+        try:
+            expected_dict = json.loads(expected) if expected else {}
+        except json.JSONDecodeError:
+            expected_dict = {}
+
+        try:
+            extractions_dict = json.loads(extractions) if extractions else {}
+        except json.JSONDecodeError:
+            extractions_dict = {}
+
+        # 更新接口
+        db_handler.execute(
+            "UPDATE apis SET case_name = %s, url = %s, method = %s, headers = %s, data = %s, expected = %s, extractions = %s WHERE id = %s",
+            (case_name, url, method, json.dumps(headers_dict), json.dumps(data_dict), json.dumps(expected_dict), json.dumps(extractions_dict), api_id)
+        )
+        logger.info("接口更新成功")
+
+        return jsonify({'success': True, 'message': '接口更新成功'})
+    except Exception as e:
+        logger.error(f"更新接口失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'更新接口失败: {str(e)}'})
 
 
 @app.route('/projects/<project_name>/modules/<module_name>/apis/delete/<int:api_id>', methods=['POST'])
@@ -1520,6 +1790,7 @@ def apis_get(project_name, module_name, api_id):
         # 返回接口数据
         return jsonify({
             'id': api_data.get('id'),
+            'api_index': api_data.get('id'),
             'case_name': api_data.get('case_name'),
             'url': api_data.get('url'),
             'method': api_data.get('method'),
@@ -1577,9 +1848,9 @@ def add_module(project_name):
         return jsonify({'success': False, 'error': f'添加模块失败: {str(e)}'})
 
 
-# 路由：添加API
+# 路由：添加API（旧版，基于YAML文件）
 @app.route('/api/add', methods=['POST'])
-def api_add():
+def api_add_legacy():
     """添加API"""
     api_name = request.form.get('api_name')
     case_name = request.form.get('case_name')

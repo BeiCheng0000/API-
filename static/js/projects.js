@@ -243,7 +243,9 @@ function deleteProject(projectName) {
         return;
     }
 
-    fetch(`/projects/delete/${projectName}`)
+    fetch(`/projects/delete/${projectName}`, {
+        method: 'POST'
+    })
     .then(response => response.json())
     .then(result => {
         if (result.success) {
@@ -767,7 +769,9 @@ function deleteApi(projectName, moduleName, apiId) {
         return;
     }
 
-    fetch(`/projects/${projectName}/modules/${moduleName}/apis/delete/${apiId}`)
+    fetch(`/projects/${projectName}/modules/${moduleName}/apis/delete/${apiId}`, {
+        method: 'POST'
+    })
     .then(response => response.json())
     .then(result => {
         if (result.success) {
