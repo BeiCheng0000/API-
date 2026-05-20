@@ -143,6 +143,29 @@ function loadProjectsList() {
                 projectsList.appendChild(projectEl);
             }
 
+            // 如果没有选中的项目和模块，默认选中第一个项目和第一个模块
+            if (!_selectedProject || !_selectedModule) {
+                const firstProject = Object.keys(projectsData)[0];
+                if (firstProject) {
+                    const firstModules = projectsData[firstProject].modules || {};
+                    const firstModule = Object.keys(firstModules)[0];
+                    if (firstModule) {
+                        // 展开第一个项目
+                        _expandedProjects.add(firstProject);
+                        const firstProjectEl = projectsList.querySelector(`.tree-project[data-project="${firstProject}"]`);
+                        if (firstProjectEl) firstProjectEl.classList.add('expanded');
+                        // 选中第一个模块
+                        selectModule(firstProject, firstModule);
+                    }
+                }
+            } else {
+                // 恢复之前选中的项目展开状态
+                if (_expandedProjects.size === 0) {
+                    _expandedProjects.add(_selectedProject);
+                    const selectedProjectEl = projectsList.querySelector(`.tree-project[data-project="${_selectedProject}"]`);
+                    if (selectedProjectEl) selectedProjectEl.classList.add('expanded');
+                }
+            }
 
         })
         .catch(error => {
@@ -850,10 +873,36 @@ function loadSchedulerProjectTree() {
             }
             container.innerHTML = html;
 
-            // 恢复之前选中模块的高亮状态
+            // 恢复之前选中模块的高亮状态，或默认选中第一个项目和第一个模块
             if (_schedulerSelectedProject && _schedulerSelectedModule) {
                 const selectedModule = container.querySelector(`.tree-module[data-project="${_schedulerSelectedProject}"][data-module="${_schedulerSelectedModule}"]`);
-                if (selectedModule) selectedModule.classList.add('active');
+                if (selectedModule) {
+                    selectedModule.classList.add('active');
+                } else {
+                    // 之前选中的模块不存在了，重置并默认选中第一个
+                    _schedulerSelectedProject = '';
+                    _schedulerSelectedModule = '';
+                }
+            }
+
+            // 如果没有选中的项目和模块，默认选中第一个项目和第一个模块
+            if (!_schedulerSelectedProject || !_schedulerSelectedModule) {
+                const firstProject = Object.keys(projectsData)[0];
+                if (firstProject) {
+                    const firstModules = projectsData[firstProject].modules || {};
+                    const firstModule = Object.keys(firstModules)[0];
+                    if (firstModule) {
+                        // 展开第一个项目
+                        const firstProjectEl = container.querySelector(`.tree-project[data-project="${firstProject}"]`);
+                        if (firstProjectEl) firstProjectEl.classList.add('expanded');
+                        // 选中第一个模块
+                        selectSchedulerModule(firstProject, firstModule);
+                    }
+                }
+            } else {
+                // 确保选中的项目展开
+                const selectedProjectEl = container.querySelector(`.tree-project[data-project="${_schedulerSelectedProject}"]`);
+                if (selectedProjectEl) selectedProjectEl.classList.add('expanded');
             }
         });
     })

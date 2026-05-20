@@ -28,7 +28,16 @@ function switchPage(pageName, menuItem) {
     });
     if (menuItem) {
         menuItem.classList.add('active');
+    } else {
+        // 如果没有传入menuItem，根据pageName查找对应的菜单项
+        const menuItemEl = document.querySelector(`.menu-item[data-page="${pageName}"]`);
+        if (menuItemEl) {
+            menuItemEl.classList.add('active');
+        }
     }
+
+    // 更新URL锚点，不触发页面滚动
+    history.replaceState(null, '', '#' + pageName);
 
     // 更新面包屑
     const breadcrumbCurrent = document.getElementById('breadcrumbCurrent');
@@ -103,6 +112,30 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 检查是否有Flash消息
     checkFlashMessages();
+
+    // 根据URL锚点切换到对应页面
+    const hash = window.location.hash.substring(1); // 去掉#
+    const validPages = ['projects', 'scheduler', 'debug', 'statistics'];
+    if (hash && validPages.includes(hash)) {
+        switchPage(hash);
+    } else {
+        // 没有锚点时，检查当前活动页面是否需要加载数据
+        const activePage = document.querySelector('.page-content.active');
+        if (activePage && activePage.id === 'page-statistics') {
+            if (typeof loadStatistics === 'function') {
+                loadStatistics();
+            }
+        }
+    }
+});
+
+// 监听浏览器前进/后退按钮
+window.addEventListener('hashchange', function() {
+    const hash = window.location.hash.substring(1); // 去掉#
+    const validPages = ['projects', 'scheduler', 'debug', 'statistics'];
+    if (hash && validPages.includes(hash)) {
+        switchPage(hash);
+    }
 });
 
 /**

@@ -20,20 +20,20 @@
         </div>
         <div class="sidebar-menu">
             <div class="menu-section">主导航</div>
-            <a href="#" class="menu-item active" data-page="projects" onclick="switchPage('projects', this)">
+            <a href="#projects" class="menu-item active" data-page="projects" onclick="switchPage('projects', this); return false;">
                 <i class="bi bi-folder2-open"></i>
                 <span>API项目</span>
                 <span class="menu-badge" id="projectCount">{{ projects_data|length }}</span>
             </a>
-            <a href="#" class="menu-item" data-page="scheduler" onclick="switchPage('scheduler', this)">
+            <a href="#scheduler" class="menu-item" data-page="scheduler" onclick="switchPage('scheduler', this); return false;">
                 <i class="bi bi-clock-history"></i>
                 <span>定时任务</span>
             </a>
-            <a href="#" class="menu-item" data-page="debug" onclick="switchPage('debug', this)">
+            <a href="#debug" class="menu-item" data-page="debug" onclick="switchPage('debug', this); return false;">
                 <i class="bi bi-bug"></i>
                 <span>接口调试</span>
             </a>
-            <a href="#" class="menu-item" data-page="statistics" onclick="switchPage('statistics', this)">
+            <a href="#statistics" class="menu-item" data-page="statistics" onclick="switchPage('statistics', this); return false;">
                 <i class="bi bi-bar-chart-line"></i>
                 <span>数据统计</span>
             </a>
