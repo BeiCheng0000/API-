@@ -315,19 +315,14 @@ def get_statistics_data() -> List[Dict[str, Any]]:
         统计数据列表
     """
     try:
-        print("[DEBUG] get_statistics_data() 被调用", flush=True)
-
         if not db_handler:
             logger.error("db_handler 为 None，无法读取统计数据")
-            print("[DEBUG] db_handler 为 None，无法读取统计数据", flush=True)
             return []
 
         # 确保连接可用
         db_handler._ensure_connection()
 
         # 从数据库读取统计数据
-        print("[DEBUG] 开始从数据库读取统计数据...", flush=True)
-        logger.info("开始从数据库读取统计数据...")
         statistics = db_handler.query(
             """SELECT id, method, url, status_code, response_time,
                assertion_passed, assertion_count, assertion_passed_count,
@@ -338,12 +333,26 @@ def get_statistics_data() -> List[Dict[str, Any]]:
                ORDER BY id DESC"""
         )
 
-        if statistics:
-            print(f"[DEBUG] 从数据库成功读取到 {len(statistics)} 条统计数据", flush=True)
-            logger.info(f"从数据库成功读取到 {len(statistics)} 条统计数据")
+        if not statistics:
+            return []
+
+        # 批量获取所有断言结果（消除N+1查询问题）
+        stat_ids = [int(stat['id']) for stat in statistics if stat.get('id')]
+        if stat_ids:
+            placeholders = ','.join(['%s'] * len(stat_ids))
+            all_assertions = db_handler.query(
+                f"SELECT * FROM assertion_results WHERE statistic_id IN ({placeholders})",
+                tuple(stat_ids)
+            )
+            # 按 statistic_id 分组
+            assertion_map = {}
+            for ar in all_assertions:
+                sid = ar.get('statistic_id')
+                if sid not in assertion_map:
+                    assertion_map[sid] = []
+                assertion_map[sid].append(ar)
         else:
-            print("[DEBUG] 数据库中没有找到统计数据", flush=True)
-            logger.warning("数据库中没有找到统计数据")
+            assertion_map = {}
 
         # 为每条记录添加断言结果，并做字段映射确保前端兼容
         for stat in statistics:
@@ -355,13 +364,9 @@ def get_statistics_data() -> List[Dict[str, Any]]:
             if 'error' not in stat:
                 stat['error'] = ''
 
-            # 确保 id 是整数类型
+            # 从预加载的断言结果映射中获取
             statistic_id = int(stat['id']) if stat['id'] else 0
-            assertion_results = db_handler.query(
-                "SELECT * FROM assertion_results WHERE statistic_id = %s",
-                (statistic_id,)
-            )
-            stat['assertion_results'] = assertion_results
+            stat['assertion_results'] = assertion_map.get(statistic_id, [])
 
         # 确保返回的是列表
         return list(statistics) if isinstance(statistics, tuple) else statistics
@@ -2226,42 +2231,46 @@ def scheduler_delete(job_id):
 # 路由：获取统计页面的项目列表
 @app.route('/statistics/projects')
 def statistics_projects():
-    """获取统计数据中所有项目列表"""
-    data = get_statistics_data()
-    projects = sorted(set(r.get('project', '') for r in data if r.get('project')))
-    return jsonify({'success': True, 'projects': projects})
+    """获取统计数据中所有项目列表（SQL直接查询）"""
+    try:
+        if not db_handler:
+            return jsonify({'success': True, 'projects': []})
+        db_handler._ensure_connection()
+        rows = db_handler.query("SELECT DISTINCT project FROM test_statistics WHERE project IS NOT NULL AND project != '' ORDER BY project")
+        projects = [r['project'] for r in rows]
+        return jsonify({'success': True, 'projects': projects})
+    except Exception as e:
+        logger.error(f"获取项目列表失败: {e}")
+        return jsonify({'success': True, 'projects': []})
 
 
 # 路由：获取统计页面的模块列表
 @app.route('/statistics/modules')
 def statistics_modules():
-    """获取指定项目的模块列表"""
+    """获取指定项目的模块列表（SQL直接查询）"""
     project = request.args.get('project', '')
-    data = get_statistics_data()
-    if project:
-        modules = sorted(set(r.get('module', '') for r in data if r.get('project') == project and r.get('module')))
-    else:
-        modules = sorted(set(r.get('module', '') for r in data if r.get('module')))
-    return jsonify({'success': True, 'modules': modules})
+    try:
+        if not db_handler:
+            return jsonify({'success': True, 'modules': []})
+        db_handler._ensure_connection()
+        if project:
+            rows = db_handler.query("SELECT DISTINCT module FROM test_statistics WHERE project = %s AND module IS NOT NULL AND module != '' ORDER BY module", (project,))
+        else:
+            rows = db_handler.query("SELECT DISTINCT module FROM test_statistics WHERE module IS NOT NULL AND module != '' ORDER BY module")
+        modules = [r['module'] for r in rows]
+        return jsonify({'success': True, 'modules': modules})
+    except Exception as e:
+        logger.error(f"获取模块列表失败: {e}")
+        return jsonify({'success': True, 'modules': []})
 
 
 # 路由：获取统计数据列表
 @app.route('/statistics/list')
 def statistics_list():
-    """获取统计数据列表，支持筛选和分页"""
-    print("=" * 60, flush=True)
-    print("[DEBUG] 收到统计数据列表请求，开始从数据库获取数据...", flush=True)
-    logger.info("收到统计数据列表请求，开始从数据库获取数据...")
-    data = get_statistics_data()
-    print(f"[DEBUG] 获取到 {len(data)} 条原始数据", flush=True)
-    logger.info(f"获取到 {len(data)} 条原始数据")
-    if data:
-        first_id = data[0].get('id', 'N/A')
-        last_id = data[-1].get('id', 'N/A')
-        logger.info(f"[关键调试] 原始数据ID范围: 第1条ID={first_id}, 最后1条ID={last_id}")
-        # 打印前3条的ID和case_name
-        for i, r in enumerate(data[:3]):
-            logger.info(f"  原始数据[{i}]: id={r.get('id')}, case_name={r.get('case_name')}, project={r.get('project')}")
+    """获取统计数据列表，支持筛选和分页（SQL层筛选+分页，高性能）"""
+    if not db_handler:
+        return jsonify({'records': [], 'total': 0, 'page': 1, 'page_size': 20,
+                        'total_pages': 0, 'data_source': 'DATABASE', 'summary': {}})
 
     # 获取筛选参数
     project = request.args.get('project', '')
@@ -2275,99 +2284,161 @@ def statistics_list():
     page = int(request.args.get('page', 1))
     page_size = int(request.args.get('page_size', 20))
 
-    # 筛选
-    filtered = data
+    # 构建SQL WHERE条件
+    conditions = []
+    params = []
+
     if project:
-        filtered = [r for r in filtered if r.get('project') == project]
+        conditions.append("project = %s")
+        params.append(project)
     if module:
-        filtered = [r for r in filtered if r.get('module') == module]
+        conditions.append("module = %s")
+        params.append(module)
     if method:
-        filtered = [r for r in filtered if r.get('method') == method]
+        conditions.append("method = %s")
+        params.append(method)
     if status:
-        filtered = [r for r in filtered if r.get('status_code') and (
-            (status == '2xx' and 200 <= r['status_code'] < 300) or
-            (status == '4xx' and 400 <= r['status_code'] < 500) or
-            (status == '5xx' and 500 <= r['status_code'] < 600)
-        )]
+        if status == '2xx':
+            conditions.append("status_code >= 200 AND status_code < 300")
+        elif status == '4xx':
+            conditions.append("status_code >= 400 AND status_code < 500")
+        elif status == '5xx':
+            conditions.append("status_code >= 500 AND status_code < 600")
     if assertion:
-        filtered = [r for r in filtered if r.get('assertion_passed') == (assertion == 'passed')]
+        conditions.append("assertion_passed = %s")
+        params.append(assertion == 'passed')
     if date_start:
-        filtered = [r for r in filtered if r.get('timestamp', '') >= date_start]
+        conditions.append("timestamp >= %s")
+        params.append(date_start)
     if date_end:
-        filtered = [r for r in filtered if r.get('timestamp', '') <= date_end + ' 23:59:59']
+        conditions.append("timestamp <= %s")
+        params.append(date_end + ' 23:59:59')
     if keyword:
-        kw = keyword.lower()
-        filtered = [r for r in filtered if kw in r.get('url', '').lower() or kw in r.get('project', '').lower() or kw in r.get('module', '').lower()]
+        conditions.append("(LOWER(url) LIKE %s OR LOWER(project) LIKE %s OR LOWER(module) LIKE %s)")
+        kw_like = f'%{keyword.lower()}%'
+        params.extend([kw_like, kw_like, kw_like])
 
-    # 统计概览
-    total = len(filtered)
-    success_count = sum(1 for r in filtered if r.get('status_code') and 200 <= r['status_code'] < 300)
-    fail_count = total - success_count
-    times = [r.get('response_time', 0) for r in filtered if r.get('response_time') is not None]
-    avg_time = round(sum(times) / len(times), 2) if times else 0
-    min_time = round(min(times), 2) if times else 0
-    max_time = round(max(times), 2) if times else 0
+    where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
 
-    # 状态码分布
-    status_dist = {}
-    for r in filtered:
-        sc = r.get('status_code')
-        if sc:
-            key = f"{sc // 100}xx"
-            status_dist[key] = status_dist.get(key, 0) + 1
+    try:
+        db_handler._ensure_connection()
 
-    # 请求方法分布
-    method_dist = {}
-    for r in filtered:
-        m = r.get('method', 'UNKNOWN')
-        method_dist[m] = method_dist.get(m, 0) + 1
+        # 1. 统计概览（使用SQL聚合，无需加载全量数据）
+        summary_sql = f"""SELECT
+            COUNT(*) as total_count,
+            SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END) as success_count,
+            ROUND(AVG(response_time), 2) as avg_time,
+            ROUND(MIN(response_time), 2) as min_time,
+            ROUND(MAX(response_time), 2) as max_time,
+            SUM(assertion_count) as assertion_total,
+            SUM(assertion_passed_count) as assertion_passed_total
+        FROM test_statistics{where_clause}"""
+        summary_row = db_handler.query(summary_sql, tuple(params) if params else None)
+        summary_data = summary_row[0] if summary_row else {}
 
-    # 响应时间趋势（最近50条，按时间升序排列用于图表展示）
-    trend_data = []
-    recent_50 = filtered[:50]  # filtered已按最新在前排序，取前50条即最近50条
-    for r in reversed(recent_50):  # 反转为时间升序，适合图表从左到右展示
-        if r.get('response_time') is not None:
-            trend_data.append({
-                'time': r.get('timestamp', ''),
-                'value': r['response_time']
-            })
+        total = summary_data.get('total_count', 0) or 0
+        success_count = summary_data.get('success_count', 0) or 0
+        fail_count = total - success_count
+        avg_time = summary_data.get('avg_time', 0) or 0
+        min_time = summary_data.get('min_time', 0) or 0
+        max_time = summary_data.get('max_time', 0) or 0
+        assertion_total = summary_data.get('assertion_total', 0) or 0
+        assertion_passed_total = summary_data.get('assertion_passed_total', 0) or 0
 
-    # 断言统计
-    assertion_total = sum(r.get('assertion_count', 0) for r in filtered)
-    assertion_passed_total = sum(r.get('assertion_passed_count', 0) for r in filtered)
+        # 2. 状态码分布（SQL聚合，兼容 ONLY_FULL_GROUP_BY）
+        status_dist_sql = f"""SELECT
+            CONCAT(FLOOR(status_code / 100), 'xx') as status_group,
+            COUNT(*) as cnt
+        FROM test_statistics{where_clause}
+        GROUP BY CONCAT(FLOOR(status_code / 100), 'xx')"""
+        status_dist_rows = db_handler.query(status_dist_sql, tuple(params) if params else None)
+        status_dist = {r['status_group']: r['cnt'] for r in status_dist_rows} if status_dist_rows else {}
 
-    # 数据已按 id DESC 排序（最新的在前），无需再反转
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    page = min(page, total_pages)
-    start = (page - 1) * page_size
-    page_data = filtered[start:start + page_size]
+        # 3. 请求方法分布（SQL聚合）
+        method_dist_sql = f"""SELECT method, COUNT(*) as cnt
+        FROM test_statistics{where_clause}
+        GROUP BY method"""
+        method_dist_rows = db_handler.query(method_dist_sql, tuple(params) if params else None)
+        method_dist = {r['method']: r['cnt'] for r in method_dist_rows} if method_dist_rows else {}
 
-    # 关键调试：打印返回给前端的数据
-    if page_data:
-        logger.info(f"[关键调试] 返回前端 {len(page_data)} 条数据, 第1条ID={page_data[0].get('id')}, case_name={page_data[0].get('case_name')}")
-    logger.info(f"[关键调试] 分页信息: page={page}, page_size={page_size}, total={total}, total_pages={total_pages}")
+        # 4. 响应时间趋势（最近50条，SQL LIMIT）
+        trend_sql = f"""SELECT timestamp as time, response_time as value
+        FROM test_statistics{where_clause}
+        ORDER BY id DESC LIMIT 50"""
+        trend_rows = db_handler.query(trend_sql, tuple(params) if params else None)
+        trend_data = list(reversed(trend_rows)) if trend_rows else []
 
-    return jsonify({
-        'records': page_data,
-        'total': total,
-        'page': page,
-        'page_size': page_size,
-        'total_pages': total_pages,
-        'data_source': 'DATABASE',  # 标记数据来源
-        'summary': {
-            'total_count': total,
-            'success_count': success_count,
-            'fail_count': fail_count,
-            'avg_time': avg_time,
-            'min_time': min_time,
-            'max_time': max_time,
-            'success_rate': round(success_count / total * 100, 1) if total else 0,
-            'assertion_rate': round(assertion_passed_total / assertion_total * 100, 1) if assertion_total else 0,
-            'status_dist': status_dist,
-            'method_dist': method_dist,
-            'trend_data': trend_data
-        }
-    })
+        # 5. 分页数据（SQL LIMIT OFFSET）
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, total_pages)
+        offset = (page - 1) * page_size
+
+        page_sql = f"""SELECT id, method, url, status_code, response_time,
+            assertion_passed, assertion_count, assertion_passed_count,
+            source, project, module, case_name, request_headers,
+            request_body, response_headers, response_body,
+            timestamp, error, created_at
+        FROM test_statistics{where_clause}
+        ORDER BY id DESC
+        LIMIT %s OFFSET %s"""
+        page_params = list(params) + [page_size, offset]
+        page_data = db_handler.query(page_sql, tuple(page_params))
+
+        # 批量获取当前页的断言结果
+        if page_data:
+            stat_ids = [int(r['id']) for r in page_data if r.get('id')]
+            if stat_ids:
+                placeholders = ','.join(['%s'] * len(stat_ids))
+                all_assertions = db_handler.query(
+                    f"SELECT * FROM assertion_results WHERE statistic_id IN ({placeholders})",
+                    tuple(stat_ids)
+                )
+                assertion_map = {}
+                for ar in all_assertions:
+                    sid = ar.get('statistic_id')
+                    if sid not in assertion_map:
+                        assertion_map[sid] = []
+                    assertion_map[sid].append(ar)
+            else:
+                assertion_map = {}
+
+            for r in page_data:
+                # 映射 timestamp
+                if 'timestamp' not in r or not r['timestamp']:
+                    r['timestamp'] = str(r.get('created_at', '')) if r.get('created_at') else ''
+                # 确保 error 字段存在
+                if 'error' not in r:
+                    r['error'] = ''
+                # 断言结果
+                statistic_id = int(r['id']) if r['id'] else 0
+                r['assertion_results'] = assertion_map.get(statistic_id, [])
+
+        return jsonify({
+            'records': page_data,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': total_pages,
+            'data_source': 'DATABASE',
+            'summary': {
+                'total_count': total,
+                'success_count': success_count,
+                'fail_count': fail_count,
+                'avg_time': float(avg_time),
+                'min_time': float(min_time),
+                'max_time': float(max_time),
+                'success_rate': round(success_count / total * 100, 1) if total else 0,
+                'assertion_rate': round(assertion_passed_total / assertion_total * 100, 1) if assertion_total else 0,
+                'status_dist': status_dist,
+                'method_dist': method_dist,
+                'trend_data': trend_data
+            }
+        })
+    except Exception as e:
+        logger.error(f"获取统计数据列表失败: {e}")
+        return jsonify({'records': [], 'total': 0, 'page': 1, 'page_size': page_size,
+                        'total_pages': 0, 'data_source': 'DATABASE', 'summary': {},
+                        'error': str(e)})
 
 
 # 路由：导出统计数据

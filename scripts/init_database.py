@@ -84,7 +84,29 @@ class DatabaseInitializer:
         self.create_scheduler_jobs_table()
         self.create_test_statistics_table()
         self.create_assertion_results_table()
+        self.ensure_statistics_indexes()
         logger.info("所有表创建成功")
+
+    def ensure_statistics_indexes(self):
+        """确保test_statistics表有所有必要的索引（兼容已有数据库，缺失则添加）"""
+        try:
+            existing = self.db_handler.query("SHOW INDEX FROM test_statistics")
+            existing_indexes = set(r['Key_name'] for r in existing)
+            needed_indexes = {
+                'idx_method': 'ALTER TABLE test_statistics ADD INDEX idx_method (method)',
+                'idx_status_code': 'ALTER TABLE test_statistics ADD INDEX idx_status_code (status_code)',
+                'idx_assertion_passed': 'ALTER TABLE test_statistics ADD INDEX idx_assertion_passed (assertion_passed)',
+                'idx_timestamp': 'ALTER TABLE test_statistics ADD INDEX idx_timestamp (timestamp)',
+            }
+            for idx_name, sql in needed_indexes.items():
+                if idx_name not in existing_indexes:
+                    try:
+                        self.db_handler.execute(sql)
+                        logger.info(f"添加索引 {idx_name} 成功")
+                    except Exception as e:
+                        logger.warning(f"添加索引 {idx_name} 失败（可能已存在）: {e}")
+        except Exception as e:
+            logger.warning(f"检查/添加索引时出错: {e}")
 
     def create_projects_table(self):
         """创建项目表"""
@@ -223,7 +245,11 @@ class DatabaseInitializer:
             INDEX `idx_project` (`project`),
             INDEX `idx_module` (`module`),
             INDEX `idx_case_name` (`case_name`),
-            INDEX `idx_created_at` (`created_at`)
+            INDEX `idx_created_at` (`created_at`),
+            INDEX `idx_method` (`method`),
+            INDEX `idx_status_code` (`status_code`),
+            INDEX `idx_assertion_passed` (`assertion_passed`),
+            INDEX `idx_timestamp` (`timestamp`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='测试统计表'
         """
         self.db_handler.execute(sql)
