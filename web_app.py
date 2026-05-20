@@ -1266,7 +1266,176 @@ def projects_list():
         return jsonify({})
 
 
-@app.route('/projects/<project_name>/modules/<module_name>/apis/delete/<int:api_id>')
+@app.route('/projects/<project_name>/modules/delete/<module_name>', methods=['POST'])
+def module_delete(project_name, module_name):
+    """删除模块"""
+    from urllib.parse import unquote
+    project_name = unquote(project_name)
+    module_name = unquote(module_name)
+    logger.info(f"========== 开始删除模块 ==========")
+    logger.info(f"项目名称: {project_name}, 模块名称: {module_name}")
+
+    if not db_handler:
+        logger.error("数据库未连接")
+        return jsonify({'success': False, 'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {project_name}")
+            return jsonify({'success': False, 'error': '项目不存在'})
+        proj_id = proj[0]['id']
+
+        # 查询模块ID
+        mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+        if not mod:
+            logger.warning(f"模块不存在: {module_name}")
+            return jsonify({'success': False, 'error': '模块不存在'})
+        mod_id = mod[0]['id']
+
+        # 删除模块下的所有接口
+        db_handler.execute("DELETE FROM apis WHERE module_id = %s", (mod_id,))
+        logger.info("模块下的接口删除成功")
+
+        # 删除模块
+        db_handler.execute("DELETE FROM modules WHERE id = %s", (mod_id,))
+        logger.info("模块删除成功")
+
+        return jsonify({'success': True, 'message': '模块删除成功'})
+    except Exception as e:
+        logger.error(f"删除模块失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'删除模块失败: {str(e)}'})
+
+
+@app.route('/projects/<project_name>/modules/add', methods=['POST'])
+def module_add(project_name):
+    """添加模块"""
+    from urllib.parse import unquote
+    project_name = unquote(project_name)
+    module_name = request.form.get('module_name', '').strip()
+    module_desc = request.form.get('module_desc', '').strip()
+    
+    logger.info(f"========== 开始添加模块 ==========")
+    logger.info(f"项目名称: {project_name}, 模块名称: {module_name}, 描述: {module_desc}")
+    
+    if not module_name:
+        return jsonify({'success': False, 'error': '模块名称不能为空'})
+    
+    if not db_handler:
+        return jsonify({'success': False, 'error': '数据库未连接'})
+    
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+        
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {project_name}")
+            return jsonify({'success': False, 'error': '项目不存在'})
+        proj_id = proj[0]['id']
+        
+        # 检查模块是否已存在
+        existing = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+        if existing:
+            logger.warning(f"模块已存在: {module_name}")
+            return jsonify({'success': False, 'error': '模块已存在'})
+        
+        # 添加模块
+        db_handler.execute(
+            "INSERT INTO modules (project_id, name, description) VALUES (%s, %s, %s)",
+            (proj_id, module_name, module_desc)
+        )
+        logger.info("模块添加成功")
+        
+        return jsonify({'success': True, 'message': '模块添加成功'})
+    except Exception as e:
+        logger.error(f"添加模块失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'添加模块失败: {str(e)}'})
+
+
+@app.route('/projects/<project_name>/modules/<module_name>/apis/add', methods=['POST'])
+def api_add(project_name, module_name):
+    """添加接口"""
+    from urllib.parse import unquote
+    project_name = unquote(project_name)
+    module_name = unquote(module_name)
+    case_name = request.form.get('case_name', '').strip()
+    url = request.form.get('url', '').strip()
+    method = request.form.get('method', 'GET').strip()
+    headers = request.form.get('headers', '{}').strip()
+    data = request.form.get('data', '{}').strip()
+    expected = request.form.get('expected', '{}').strip()
+    extractions = request.form.get('extractions', '{}').strip()
+
+    logger.info(f"========== 开始添加接口 ==========")
+    logger.info(f"项目名称: {project_name}, 模块名称: {module_name}, 接口名称: {case_name}")
+
+    if not case_name:
+        return jsonify({'success': False, 'error': '接口名称不能为空'})
+    if not url:
+        return jsonify({'success': False, 'error': 'URL不能为空'})
+
+    if not db_handler:
+        return jsonify({'success': False, 'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {project_name}")
+            return jsonify({'success': False, 'error': '项目不存在'})
+        proj_id = proj[0]['id']
+
+        # 查询模块ID
+        mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+        if not mod:
+            logger.warning(f"模块不存在: {module_name}")
+            return jsonify({'success': False, 'error': '模块不存在'})
+        mod_id = mod[0]['id']
+
+        # 解析JSON数据
+        try:
+            headers_dict = json.loads(headers) if headers else {}
+        except json.JSONDecodeError:
+            headers_dict = {}
+
+        try:
+            data_dict = json.loads(data) if data else {}
+        except json.JSONDecodeError:
+            data_dict = {}
+
+        try:
+            expected_dict = json.loads(expected) if expected else {}
+        except json.JSONDecodeError:
+            expected_dict = {}
+
+        try:
+            extractions_dict = json.loads(extractions) if extractions else {}
+        except json.JSONDecodeError:
+            extractions_dict = {}
+
+        # 添加接口
+        db_handler.execute(
+            "INSERT INTO apis (module_id, case_name, url, method, headers, data, expected, extractions) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (mod_id, case_name, url, method, json.dumps(headers_dict), json.dumps(data_dict), json.dumps(expected_dict), json.dumps(extractions_dict))
+        )
+        logger.info("接口添加成功")
+
+        return jsonify({'success': True, 'message': '接口添加成功'})
+    except Exception as e:
+        logger.error(f"添加接口失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'添加接口失败: {str(e)}'})
+
+
+@app.route('/projects/<project_name>/modules/<module_name>/apis/delete/<int:api_id>', methods=['POST'])
 def apis_delete(project_name, module_name, api_id):
     """删除接口"""
     logger.info(f"========== 开始删除接口 ==========")
@@ -1364,6 +1533,48 @@ def apis_get(project_name, module_name, api_id):
     except Exception as e:
         logger.error(f"获取接口数据失败: {e}", exc_info=True)
         return jsonify({'error': f'获取接口数据失败: {str(e)}'})
+
+
+# 路由：添加模块
+@app.route('/projects/<project_name>/modules/add', methods=['POST'])
+def add_module(project_name):
+    """添加模块"""
+    from urllib.parse import unquote
+    project_name = unquote(project_name)
+    module_name = request.form.get('module_name', '').strip()
+    module_desc = request.form.get('module_desc', '').strip()
+
+    if not module_name:
+        return jsonify({'success': False, 'error': '模块名称不能为空'})
+
+    if not db_handler:
+        return jsonify({'success': False, 'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            return jsonify({'success': False, 'error': '项目不存在'})
+        proj_id = proj[0]['id']
+
+        # 检查模块是否已存在
+        existing = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s",
+                                    (proj_id, module_name))
+        if existing:
+            return jsonify({'success': False, 'error': '模块已存在'})
+
+        # 添加模块
+        db_handler.execute(
+            "INSERT INTO modules (project_id, name, description) VALUES (%s, %s, %s)",
+            (proj_id, module_name, module_desc)
+        )
+
+        return jsonify({'success': True, 'message': '模块添加成功'})
+    except Exception as e:
+        logger.error(f"添加模块失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'添加模块失败: {str(e)}'})
 
 
 # 路由：添加API

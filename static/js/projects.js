@@ -738,7 +738,9 @@ function deleteModule(projectName, moduleName) {
         return;
     }
 
-    fetch(`/projects/${projectName}/modules/delete/${moduleName}`)
+    fetch(`/projects/${projectName}/modules/delete/${moduleName}`, {
+        method: 'POST'
+    })
     .then(response => response.json())
     .then(result => {
         if (result.success) {
