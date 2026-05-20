@@ -1317,7 +1317,10 @@ function saveEditApi() {
         if (result.success) {
             showToast('成功', result.message, 'success');
             bootstrap.Modal.getInstance(document.getElementById('editApiModal')).hide();
-            loadModulesList(projectName);
+            // 刷新项目列表和当前模块的接口列表
+            if (typeof loadProjectsList === 'function') loadProjectsList();
+            if (typeof loadApisList === 'function') loadApisList(projectName, moduleName);
+            if (typeof loadTopStats === 'function') loadTopStats();
         } else {
             showToast('错误', result.error, 'danger');
         }

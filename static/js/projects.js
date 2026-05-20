@@ -714,12 +714,8 @@ function addApi() {
             bootstrap.Modal.getInstance(document.getElementById('addApiModal')).hide();
             // 刷新项目列表以显示更新的模块信息
             loadProjectsList();
-            // 如果当前选中的是该项目和模块，刷新接口列表
-            const selectedModule = document.querySelector('.module-item.active');
-            if (selectedModule) {
-                const moduleName = selectedModule.dataset.module;
-                loadApisList(projectName, moduleName);
-            }
+            // 刷新当前模块的接口列表
+            loadApisList(projectName, moduleName);
             if (typeof loadTopStats === 'function') loadTopStats();
         } else {
             showToast('错误', result.error, 'danger');
@@ -777,6 +773,8 @@ function deleteApi(projectName, moduleName, apiId) {
         if (result.success) {
             showToast('成功', result.message, 'success');
             loadProjectsList();
+            // 刷新当前模块的接口列表
+            loadApisList(projectName, moduleName);
             if (typeof loadTopStats === 'function') loadTopStats();
         } else {
             showToast('错误', result.error, 'danger');
