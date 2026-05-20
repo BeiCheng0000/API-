@@ -128,7 +128,11 @@ pip install -r requirements.txt
 
 ```bash
 # 复制环境变量模板
+# Linux / macOS:
 cp .env.example .env
+
+# Windows:
+copy .env.example .env
 
 # 编辑配置文件
 # 1. 修改 config/config.yaml 中的环境、日志等配置
@@ -204,16 +208,19 @@ python run_web_app.py --port 8080 --host 127.0.0.1
 
 ### 主配置文件（config/config.yaml）
 
+> ⚠️ 敏感信息（密码、Token）请通过 `.env` 环境变量设置，不要直接填写在此文件中
+
 ```yaml
 # 当前测试环境：dev / test / staging / prod
+# ⚠️ 默认应为 dev，避免误操作生产环境
 env:
   current: dev
 
 # 日志配置
 log:
-  level: INFO           # 日志级别
-  rotation: "10 MB"     # 单个日志文件大小
-  retention: "30 days"  # 日志保留时间
+  level: INFO             # 日志级别: DEBUG / INFO / WARNING / ERROR
+  rotation: "10 MB"       # 单个日志文件大小，超过后自动轮转
+  retention: "30 days"    # 日志文件保留时间
 
 # 数据库配置（可选，需要安装 PyMySQL 或 pymongo）
 database:
@@ -221,18 +228,29 @@ database:
     host: localhost
     port: 3306
     user: root
-    password: ""         # ⚠️ 建议使用环境变量
+    password: ""           # ⚠️ 请通过环境变量 DB_PASSWORD 设置
     database: test_db
+    charset: utf8mb4
   mongodb:
     host: localhost
     port: 27017
+    user: ""
+    password: ""           # ⚠️ 请通过环境变量 MONGO_PASSWORD 设置
+    database: test_db
 
 # 邮件配置（可选，用于测试报告通知）
 email:
   smtp_server: smtp.example.com
   smtp_port: 587
   sender: test@example.com
-  password: ""           # ⚠️ 建议使用环境变量
+  password: ""             # ⚠️ 请通过环境变量 EMAIL_PASSWORD 设置
+  receivers:
+    - receiver1@example.com
+
+# 报告配置
+report:
+  allure:
+    history: 20            # Allure 报告保留的历史运行次数
 ```
 
 ### 环境配置文件（config/env.yaml）
@@ -384,6 +402,71 @@ allure --version
 1. 在 `data/test_data.yaml` 中添加测试数据
 2. 或通过 Web 界面"添加 API"功能添加
 3. 在 `testcases/` 目录下编写 pytest 测试函数
+
+## 故障排查
+
+### Q: 数据库连接失败怎么办？
+
+1. 检查 `config/config.yaml` 中的数据库配置是否正确
+2. 确认 MySQL 服务已启动：
+   ```bash
+   # Linux
+   sudo systemctl status mysql
+   # Windows
+   net start mysql
+   ```
+3. 确认网络连通性：`telnet localhost 3306`
+4. 如果不需要数据库功能，Web 应用会自动降级为文件存储模式
+
+### Q: Web 应用页面白屏或 500 错误？
+
+1. 查看控制台日志输出，定位具体错误
+2. 检查 `data/` 目录下的数据文件是否完整（YAML/JSON 格式是否正确）
+3. 尝试清除 `data/statistics.json` 并重启（文件损坏时）
+4. 使用开发模式启动以获取更详细的错误信息：
+   ```bash
+   python run_web_app.py --dev
+   ```
+
+### Q: 定时任务不执行？
+
+1. 检查 Cron 表达式是否正确（参考 [Cron表达式说明](#cron表达式说明)）
+2. 确认 Web 应用正在运行（定时任务依赖后台调度器）
+3. 检查 `scheduler_jobs` 表或 `data/scheduler_jobs.json` 中是否有任务记录
+4. 查看日志中是否有调度器相关的错误信息
+
+### Q: 统计数据损坏如何恢复？
+
+1. Web 应用提供内置的备份与恢复功能：访问统计面板 → 备份管理
+2. 手动恢复：从 `exports/` 目录找到最近的导出文件，通过 API 恢复：
+   ```bash
+   curl -X POST http://localhost:5000/statistics/restore \
+     -H "Content-Type: application/json" \
+     -d @exports/statistics_export_xxx.json
+   ```
+3. 如果 JSON 文件损坏，可删除后重启（会创建空文件重新开始）
+
+### Q: 如何在 Docker 中部署？
+
+```dockerfile
+FROM python:3.10-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 5000
+CMD ["python", "run_web_app.py", "--host", "0.0.0.0", "--port", "5000"]
+```
+
+### Q: Python 版本兼容性？
+
+| Python 版本 | 兼容性 | 说明 |
+|------------|--------|------|
+| 3.8 | ✅ 兼容 | 最低支持版本 |
+| 3.9 | ✅ 推荐 | 稳定可靠 |
+| 3.10 | ✅ 推荐 | 稳定可靠 |
+| 3.11 | ✅ 兼容 | 需注意部分依赖包兼容性 |
+| 3.12+ | ⚠️ 实验性 | 部分依赖包可能不完全兼容 |
 
 ## 贡献指南
 

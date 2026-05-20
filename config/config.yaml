@@ -1,38 +1,58 @@
+# ============================================
+# 接口自动化测试平台 - 主配置文件
+# ============================================
+# ⚠️ 敏感信息（密码、Token）请通过 .env 环境变量设置，不要直接填写在此文件中
+# ⚠️ 默认环境为 dev，请勿直接使用 prod 环境运行测试
+# ============================================
+
+# 当前测试环境：dev / test / staging / prod
+# ⚠️ 默认应为 dev，避免误操作生产环境
+env:
+  current: dev
+
+# 日志配置
+log:
+  level: INFO             # 日志级别: DEBUG / INFO / WARNING / ERROR
+  rotation: "10 MB"       # 单个日志文件大小，超过后自动轮转
+  retention: "30 days"    # 日志文件保留时间
+  encoding: utf-8         # 日志文件编码
+  format: "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+
+# 数据库配置（可选，使用数据库功能时需要）
+# ⚠️ 密码请通过环境变量 DB_PASSWORD / MONGO_PASSWORD 设置
 database:
-  mongodb:
-    database: test_db
-    host: localhost
-    password: ''
-    port: 27017
-    user: ''
   mysql:
-    charset: utf8mb4
-    database: test_db
     host: localhost
-    password: '123456'
     port: 3306
     user: root
+    password: ""           # ⚠️ 请通过环境变量 DB_PASSWORD 设置，不要在此填写
+    database: test_db
+    charset: utf8mb4
+  mongodb:
+    host: localhost
+    port: 27017
+    user: ""
+    password: ""           # ⚠️ 请通过环境变量 MONGO_PASSWORD 设置，不要在此填写
+    database: test_db
+
+# 邮件配置（可选，用于测试报告通知）
+# ⚠️ 密码请通过环境变量 EMAIL_PASSWORD 设置
 email:
-  password: ''
-  receivers:
-  - receiver1@example.com
-  - receiver2@example.com
-  sender: test@example.com
-  smtp_port: 587
   smtp_server: smtp.example.com
-env:
-  current: prod
-log:
-  encoding: utf-8
-  format: '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level>
-    | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>'
-  level: INFO
-  retention: 30 days
-  rotation: 10 MB
+  smtp_port: 587
+  sender: test@example.com
+  password: ""             # ⚠️ 请通过环境变量 EMAIL_PASSWORD 设置，不要在此填写
+  receivers:
+    - receiver1@example.com
+    - receiver2@example.com
+
+# 项目信息
 project:
-  description: 基于Python的接口自动化测试平台
   name: 接口自动化测试平台
+  description: 基于Python的接口自动化测试平台
   version: 1.0.0
+
+# 报告配置
 report:
   allure:
-    history: 20
+    history: 20            # Allure 报告保留的历史运行次数

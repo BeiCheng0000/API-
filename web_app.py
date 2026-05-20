@@ -16,6 +16,70 @@ API自动化测试平台 - Web应用
     python run_web_app.py --port 8080  # 自定义端口
 
 注意：此文件不应通过 pytest 运行，已设置 __test__ = False
+
+文件结构导航：
+    ├─ 全局初始化（1-108行）
+    │   ├─ Flask 应用创建与配置
+    │   ├─ 数据库连接与自动迁移
+    │   └─ 全局 HTTP Session（复用TCP连接）
+    │
+    ├─ 定时任务管理（109-300行）
+    │   ├─ _save_scheduler_jobs()  - 保存定时任务到数据库
+    │   ├─ _extract_cron_expression() - 从CronTrigger提取cron表达式
+    │   ├─ _load_scheduler_jobs() - 从数据库恢复定时任务
+    │   └─ APScheduler 初始化与启动
+    │
+    ├─ 辅助函数（300-1150行）
+    │   ├─ 占位符替换（${timestamp} 等）
+    │   ├─ 断言处理与比较
+    │   ├─ 统计数据记录
+    │   └─ 数据文件读写
+    │
+    ├─ 页面路由（1154-1200行）
+    │   ├─ GET /            - 主页面
+    │   └─ GET /api/top_stats - 顶部统计
+    │
+    ├─ 项目管理 API（1200-1850行）
+    │   ├─ POST /projects/add          - 添加项目
+    │   ├─ POST /projects/delete/<name> - 删除项目
+    │   ├─ POST /projects/update       - 更新项目
+    │   ├─ GET  /projects/list         - 项目列表
+    │   ├─ 模块管理（增删改查）
+    │   └─ API管理（增删改查）
+    │
+    ├─ 测试数据 API（1850-1990行）
+    │   ├─ POST /api/add              - 添加测试用例
+    │   ├─ GET  /api/delete/<name>/<idx> - 删除用例
+    │   └─ POST /api/edit/<name>/<idx>   - 编辑用例
+    │
+    ├─ 接口调试 API（1989-2000行）
+    │   └─ POST /api/debug            - 调试接口
+    │
+    ├─ 定时任务 API（1999-2160行）
+    │   ├─ GET  /scheduler/list       - 任务列表
+    │   ├─ POST /scheduler/add        - 添加任务
+    │   ├─ POST /scheduler/update     - 更新任务
+    │   └─ POST /scheduler/delete/<id> - 删除任务
+    │
+    ├─ 统计 API（2158-2500行）
+    │   ├─ GET  /statistics/projects  - 项目统计
+    │   ├─ GET  /statistics/modules   - 模块统计
+    │   ├─ GET  /statistics/list      - 统计列表
+    │   ├─ GET  /statistics/export    - 导出统计
+    │   └─ GET  /statistics/detail/<id> - 统计详情
+    │
+    ├─ 环境与变量管理 API（2500-2730行）
+    │   ├─ 环境切换与保存
+    │   └─ 变量增删改查
+    │
+    ├─ 测试执行 API（2726-2890行）
+    │   ├─ POST /test/execute_module/<proj>/<mod> - 执行模块
+    │   └─ POST /test/execute/<proj>/<mod>/<id>   - 执行单个
+    │
+    └─ 数据备份与恢复 API（2885-3004行）
+        ├─ POST /statistics/restore     - 恢复统计
+        ├─ GET  /statistics/backup/list - 备份列表
+        └─ GET  /statistics/download    - 下载备份
 """
 
 # 告诉Pytest忽略这个文件

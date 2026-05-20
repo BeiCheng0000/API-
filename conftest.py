@@ -47,7 +47,20 @@ def api_client():
 def test_data(request):
     """
     测试数据fixture
-    从测试用例中获取测试数据
+
+    从测试函数的 test_data 属性中获取关联的测试数据。
+    使用方式：通过 @pytest.mark.parametrize 或直接为测试函数设置 test_data 属性。
+
+    示例：
+        # 方式1：通过 parametrize 间接传入
+        @pytest.mark.parametrize("test_data", [data1, data2], indirect=True)
+        def test_example(test_data):
+            ...
+
+        # 方式2：直接为函数设置属性
+        def test_example(api_client):
+            test_example.test_data = {"key": "value"}
+            ...
     """
     return getattr(request.function, "test_data", None)
 

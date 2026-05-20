@@ -1,4 +1,3 @@
-# #######
 # API自动化测试平台 - Web应用使用说明
 
 ## 概述
@@ -190,6 +189,134 @@ Web 应用提供以下 REST API 端点：
 | `/api/statistics/summary` | GET | 获取统计摘要 |
 
 > 💡 所有 API 均返回 JSON 格式数据。POST 请求的参数通过请求体（JSON）传递。
+
+### API 请求/响应示例
+
+#### 添加测试用例
+
+```bash
+POST /api/add
+Content-Type: application/json
+```
+
+**请求体：**
+```json
+{
+  "project": "默认项目",
+  "module": "login",
+  "case_name": "正常登录",
+  "url": "/user/login",
+  "method": "POST",
+  "headers": {"Content-Type": "application/json"},
+  "data": {"username": "testuser", "password": "123456"},
+  "expected": {"status_code": 200, "code": 0, "message": "登录成功"}
+}
+```
+
+**成功响应（200）：**
+```json
+{"success": true, "message": "添加成功"}
+```
+
+**失败响应（400）：**
+```json
+{"success": false, "message": "用例名称不能为空"}
+```
+
+#### 调试接口
+
+```bash
+POST /api/debug
+Content-Type: application/json
+```
+
+**请求体：**
+```json
+{
+  "url": "/user/login",
+  "method": "POST",
+  "headers": {"Content-Type": "application/json"},
+  "data": {"username": "testuser", "password": "123456"},
+  "assertions": [
+    {"type": "status_code", "expected": "200"},
+    {"type": "response", "field": "code", "expected": "0"}
+  ]
+}
+```
+
+**成功响应（200）：**
+```json
+{
+  "success": true,
+  "status_code": 200,
+  "response_time": 156.3,
+  "response_data": {"code": 0, "message": "登录成功", "data": {...}},
+  "assertion_results": [
+    {"type": "status_code", "expected": "200", "actual": "200", "passed": true},
+    {"type": "response", "field": "code", "expected": "0", "actual": 0, "passed": true}
+  ]
+}
+```
+
+#### 添加定时任务
+
+```bash
+POST /scheduler/add
+Content-Type: application/json
+```
+
+**请求体：**
+```json
+{
+  "project": "默认项目",
+  "module": "login",
+  "case_index": 0,
+  "cron_expression": "0 9 * * 1-5"
+}
+```
+
+**成功响应（200）：**
+```json
+{"success": true, "message": "定时任务添加成功", "job_id": "abc123"}
+```
+
+#### 获取统计数据
+
+```bash
+GET /statistics/list?project=默认项目&page=1&page_size=20
+```
+
+**成功响应（200）：**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "project": "默认项目",
+      "module": "login",
+      "case_name": "正常登录",
+      "method": "POST",
+      "status_code": 200,
+      "response_time": 156.3,
+      "assertion_passed": true,
+      "created_at": "2024-01-15 10:30:00"
+    }
+  ],
+  "total": 100,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+### 通用错误响应
+
+| HTTP状态码 | 含义 | 示例 |
+|-----------|------|------|
+| 200 | 请求成功 | `{"success": true, ...}` |
+| 400 | 请求参数错误 | `{"success": false, "message": "参数不能为空"}` |
+| 404 | 资源不存在 | `{"success": false, "message": "项目不存在"}` |
+| 500 | 服务器内部错误 | `{"success": false, "message": "内部错误"}` |
 
 ## 数据文件说明
 

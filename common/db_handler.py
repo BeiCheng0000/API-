@@ -67,28 +67,41 @@ class MySQLHandler(DBHandler):
         self.cursor = None
         self._lock = __import__('threading').Lock()
 
+    def _create_connection(self) -> None:
+        """
+        创建新的MySQL数据库连接和游标（内部方法）
+
+        将 pymysql.connect() 统一提取到此方法，避免在多处重复连接参数配置。
+        调用此方法前需确保已持有 self._lock（线程安全），或在不需加锁的场景下调用。
+
+        Raises:
+            ImportError: 未安装 pymysql 库
+            Exception: 数据库连接失败
+        """
+        try:
+            import pymysql
+            self.connection = pymysql.connect(
+                host=self.db_config.get("host", "localhost"),
+                port=self.db_config.get("port", 3306),
+                user=self.db_config.get("user", "root"),
+                password=self.db_config.get("password", ""),
+                database=self.db_config.get("database", "test_db"),
+                charset=self.db_config.get("charset", "utf8mb4"),
+                cursorclass=pymysql.cursors.DictCursor
+            )
+            self.cursor = self.connection.cursor()
+        except ImportError:
+            logger.error("未安装pymysql库，请先安装: pip install pymysql")
+            raise
+        except Exception as e:
+            logger.error(f"连接MySQL数据库失败: {e}")
+            raise
+
     def connect(self):
         """连接MySQL数据库（线程安全）"""
         with self._lock:
-            try:
-                import pymysql
-                self.connection = pymysql.connect(
-                    host=self.db_config.get("host", "localhost"),
-                    port=self.db_config.get("port", 3306),
-                    user=self.db_config.get("user", "root"),
-                    password=self.db_config.get("password", ""),
-                    database=self.db_config.get("database", "test_db"),
-                    charset=self.db_config.get("charset", "utf8mb4"),
-                    cursorclass=pymysql.cursors.DictCursor
-                )
-                self.cursor = self.connection.cursor()
-                logger.info(f"成功连接MySQL数据库: {self.db_config.get('host', 'localhost')}")
-            except ImportError:
-                logger.error("未安装pymysql库，请先安装: pip install pymysql")
-                raise
-            except Exception as e:
-                logger.error(f"连接MySQL数据库失败: {e}")
-                raise
+            self._create_connection()
+            logger.info(f"成功连接MySQL数据库: {self.db_config.get('host', 'localhost')}")
 
     def close(self):
         """关闭MySQL数据库连接（线程安全）"""
@@ -100,36 +113,9 @@ class MySQLHandler(DBHandler):
             logger.info("已关闭MySQL数据库连接")
 
     def _ensure_connection(self):
-        """确保数据库连接有效（线程安全）"""
+        """确保数据库连接有效（线程安全，供外部调用）"""
         with self._lock:
-            try:
-                if self.connection and self.cursor:
-                    # 测试连接是否有效
-                    self.connection.ping(reconnect=True)
-                    # 重新创建cursor，因为ping后cursor可能失效
-                    if not self.cursor or self.cursor.connection != self.connection:
-                        self.cursor = self.connection.cursor()
-                else:
-                    # connection 或 cursor 为 None，需要重新连接
-                    raise Exception("连接或游标为空，需要重新连接")
-            except Exception:
-                # 连接失效或为空，重新连接
-                try:
-                    import pymysql
-                    self.connection = pymysql.connect(
-                        host=self.db_config.get("host", "localhost"),
-                        port=self.db_config.get("port", 3306),
-                        user=self.db_config.get("user", "root"),
-                        password=self.db_config.get("password", ""),
-                        database=self.db_config.get("database", "test_db"),
-                        charset=self.db_config.get("charset", "utf8mb4"),
-                        cursorclass=pymysql.cursors.DictCursor
-                    )
-                    self.cursor = self.connection.cursor()
-                    logger.info(f"重新连接MySQL数据库成功: {self.db_config.get('host', 'localhost')}")
-                except Exception as e:
-                    logger.error(f"重新连接MySQL数据库失败: {e}")
-                    raise
+            self._ensure_connection_unsafe()
 
     def execute(self, sql: str, params: Optional[Union[Dict[str, Any], tuple]] = None) -> int:
         """
@@ -156,43 +142,34 @@ class MySQLHandler(DBHandler):
                 except Exception:
                     pass
                 logger.error(f"执行SQL失败: {e}")
-                # 执行失败时重新连接
+                # 执行失败时尝试重新连接，以便下次操作可以恢复
                 try:
-                    import pymysql
-                    self.connection = pymysql.connect(
-                        host=self.db_config.get("host", "localhost"),
-                        port=self.db_config.get("port", 3306),
-                        user=self.db_config.get("user", "root"),
-                        password=self.db_config.get("password", ""),
-                        database=self.db_config.get("database", "test_db"),
-                        charset=self.db_config.get("charset", "utf8mb4"),
-                        cursorclass=pymysql.cursors.DictCursor
-                    )
-                    self.cursor = self.connection.cursor()
+                    self._create_connection()
                 except Exception:
                     pass
                 raise
 
     def _ensure_connection_unsafe(self):
-        """确保数据库连接有效（不加锁版本，供已加锁的方法内部调用）"""
+        """
+        确保数据库连接有效（不加锁版本，供已加锁的方法内部调用）
+
+        设计说明：
+            此方法供已持有 self._lock 的方法（如 execute、query）内部调用，
+            避免重复加锁导致死锁。外部调用请使用 _ensure_connection()。
+
+        处理逻辑：
+            1. 如果连接和游标存在，通过 ping() 测试连接有效性
+            2. ping 失败或连接为空时，通过 _create_connection() 重新建立连接
+        """
         try:
             if self.connection and self.cursor:
                 self.connection.ping(reconnect=True)
                 if not self.cursor or self.cursor.connection != self.connection:
                     self.cursor = self.connection.cursor()
         except Exception:
+            # 连接失效或为空，重新连接
             try:
-                import pymysql
-                self.connection = pymysql.connect(
-                    host=self.db_config.get("host", "localhost"),
-                    port=self.db_config.get("port", 3306),
-                    user=self.db_config.get("user", "root"),
-                    password=self.db_config.get("password", ""),
-                    database=self.db_config.get("database", "test_db"),
-                    charset=self.db_config.get("charset", "utf8mb4"),
-                    cursorclass=pymysql.cursors.DictCursor
-                )
-                self.cursor = self.connection.cursor()
+                self._create_connection()
                 logger.info(f"重新连接MySQL数据库成功: {self.db_config.get('host', 'localhost')}")
             except Exception as e:
                 logger.error(f"重新连接MySQL数据库失败: {e}")
@@ -235,17 +212,7 @@ class MySQLHandler(DBHandler):
 
                     # 其他错误：重新连接后重试
                     try:
-                        import pymysql
-                        self.connection = pymysql.connect(
-                            host=self.db_config.get("host", "localhost"),
-                            port=self.db_config.get("port", 3306),
-                            user=self.db_config.get("user", "root"),
-                            password=self.db_config.get("password", ""),
-                            database=self.db_config.get("database", "test_db"),
-                            charset=self.db_config.get("charset", "utf8mb4"),
-                            cursorclass=pymysql.cursors.DictCursor
-                        )
-                        self.cursor = self.connection.cursor()
+                        self._create_connection()
                     except Exception:
                         pass
 
