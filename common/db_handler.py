@@ -3,6 +3,7 @@
 提供MySQL和MongoDB的数据库操作
 """
 
+import os
 from typing import Any, Dict, List, Optional, Union
 
 from common.config_handler import config
@@ -74,17 +75,23 @@ class MySQLHandler(DBHandler):
         将 pymysql.connect() 统一提取到此方法，避免在多处重复连接参数配置。
         调用此方法前需确保已持有 self._lock（线程安全），或在不需加锁的场景下调用。
 
+        密码获取优先级：
+            1. 环境变量 DB_PASSWORD（推荐，最安全）
+            2. config.yaml 中的 database.mysql.password
+
         Raises:
             ImportError: 未安装 pymysql 库
             Exception: 数据库连接失败
         """
         try:
             import pymysql
+            # 密码优先从环境变量获取，避免在配置文件中硬编码
+            password = os.environ.get("DB_PASSWORD") or self.db_config.get("password", "")
             self.connection = pymysql.connect(
                 host=self.db_config.get("host", "localhost"),
                 port=self.db_config.get("port", 3306),
                 user=self.db_config.get("user", "root"),
-                password=self.db_config.get("password", ""),
+                password=password,
                 database=self.db_config.get("database", "test_db"),
                 charset=self.db_config.get("charset", "utf8mb4"),
                 cursorclass=pymysql.cursors.DictCursor
@@ -241,8 +248,9 @@ class MongoDBHandler(DBHandler):
             import pymongo
 
             # 构建连接URI
+            # 密码优先从环境变量获取，避免在配置文件中硬编码
             user = self.db_config.get("user", "")
-            password = self.db_config.get("password", "")
+            password = os.environ.get("MONGO_PASSWORD") or self.db_config.get("password", "")
             host = self.db_config.get("host", "localhost")
             port = self.db_config.get("port", 27017)
 

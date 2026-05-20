@@ -92,6 +92,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+# 在所有业务模块导入之前加载 .env 环境变量
+# 这样数据库密码等敏感信息可以通过 .env 文件配置
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger

@@ -13,6 +13,10 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
 
+# 在所有业务模块导入之前加载 .env 环境变量
+from dotenv import load_dotenv
+load_dotenv()
+
 from common.logger_handler import logger
 from common.config_handler import env_config
 
