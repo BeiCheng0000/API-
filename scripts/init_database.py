@@ -115,12 +115,18 @@ class DatabaseInitializer:
             `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '项目ID',
             `name` VARCHAR(255) NOT NULL UNIQUE COMMENT '项目名称',
             `description` TEXT COMMENT '项目描述',
+            `current_env` VARCHAR(255) DEFAULT '' COMMENT '当前激活的环境名称',
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
             `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
             INDEX `idx_name` (`name`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='项目表'
         """
         self.db_handler.execute(sql)
+        # 兼容已有数据库，添加current_env字段
+        try:
+            self.db_handler.execute("ALTER TABLE projects ADD COLUMN `current_env` VARCHAR(255) DEFAULT '' COMMENT '当前激活的环境名称'")
+        except Exception:
+            pass  # 字段已存在
         logger.info("项目表创建成功")
 
     def create_modules_table(self):

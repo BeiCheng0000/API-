@@ -146,6 +146,21 @@ try:
     except Exception as migrate_err:
         logger.warning(f"自动迁移检查失败（新数据库无需迁移）: {migrate_err}")
 
+    # 自动迁移：为projects表添加current_env字段
+    try:
+        columns = db_handler.query(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'projects'"
+        )
+        column_names = [col['COLUMN_NAME'] for col in columns] if columns else []
+
+        if 'current_env' not in column_names:
+            db_handler.execute(
+                "ALTER TABLE projects ADD COLUMN `current_env` VARCHAR(255) DEFAULT '' COMMENT '当前激活的环境名称'"
+            )
+            logger.info("自动迁移：已为projects表添加current_env字段")
+    except Exception as migrate_err:
+        logger.warning(f"自动迁移projects表失败（新数据库无需迁移）: {migrate_err}")
+
     # 启动时预加载统计数据
     try:
         # logger.info("=" * 50)
@@ -633,7 +648,7 @@ def get_projects() -> Dict[str, Any]:
         db_handler._ensure_connection()
 
         result = {}
-        projects = db_handler.query("SELECT id, name, description FROM projects")
+        projects = db_handler.query("SELECT id, name, description, current_env FROM projects")
 
         for proj in projects:
             proj_name = proj['name']
@@ -680,11 +695,10 @@ def get_projects() -> Dict[str, Any]:
             for var in variables:
                 variables_dict[var['name']] = var.get('value', '') or ''
 
-            # 获取当前环境
-            current_env = ''
-            if envs_dict:
-                # 尝试从项目描述中解析当前环境（兼容旧逻辑）
-                # 或者默认取第一个环境
+            # 获取当前环境 - 从projects表读取current_env字段
+            current_env = proj.get('current_env', '') or ''
+            if not current_env and envs_dict:
+                # 如果没有设置当前环境，默认取第一个环境
                 current_env = list(envs_dict.keys())[0]
 
             result[proj_name] = {
@@ -2685,28 +2699,32 @@ def project_env_switch(project_name):
     if not env_name:
         return jsonify({'success': False, 'error': '环境名称不能为空'})
 
-    projects_data = get_projects()
-    if project_name not in projects_data:
-        return jsonify({'success': False, 'error': '项目不存在'}), 404
+    try:
+        db_handler._ensure_connection()
+        # 获取项目ID和当前环境
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            return jsonify({'success': False, 'error': '项目不存在'}), 404
+        project_id = proj[0]['id']
 
-    project = projects_data[project_name]
-    envs = project.get('envs', {})
+        # 检查环境是否存在
+        env = db_handler.query("SELECT name, base_url FROM environments WHERE project_id = %s AND name = %s", (project_id, env_name))
+        if not env:
+            return jsonify({'success': False, 'error': f'环境不存在: {env_name}'})
 
-    if env_name not in envs:
-        return jsonify({'success': False, 'error': f'环境不存在: {env_name}'})
+        # 更新当前环境
+        db_handler.execute("UPDATE projects SET current_env = %s WHERE id = %s", (env_name, project_id))
 
-    # 更新当前环境
-    projects_data[project_name]['current_env'] = env_name
-    if save_projects(projects_data):
-        base_url = envs[env_name].get('base_url', '') if isinstance(envs[env_name], dict) else ''
+        base_url = env[0].get('base_url', '')
         return jsonify({
             'success': True,
             'message': f'环境已切换为: {env_name}',
             'current_env': env_name,
             'base_url': base_url
         })
-    else:
-        return jsonify({'success': False, 'error': '保存失败'})
+    except Exception as e:
+        logger.error(f"切换环境失败: {e}")
+        return jsonify({'success': False, 'error': f'切换失败: {str(e)}'})
 
 
 # 路由：添加/编辑项目环境
@@ -2723,23 +2741,30 @@ def project_env_save(project_name):
     if not base_url:
         return jsonify({'success': False, 'error': '环境域名不能为空'})
 
-    projects_data = get_projects()
-    if project_name not in projects_data:
-        return jsonify({'success': False, 'error': '项目不存在'}), 404
+    try:
+        db_handler._ensure_connection()
+        # 获取项目ID
+        proj = db_handler.query("SELECT id, current_env FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            return jsonify({'success': False, 'error': '项目不存在'}), 404
+        project_id = proj[0]['id']
+        current_env = proj[0].get('current_env', '') or ''
 
-    if 'envs' not in projects_data[project_name]:
-        projects_data[project_name]['envs'] = {}
+        # 插入或更新环境（利用UNIQUE KEY uk_project_env）
+        db_handler.execute(
+            "INSERT INTO environments (project_id, name, base_url) VALUES (%s, %s, %s) "
+            "ON DUPLICATE KEY UPDATE base_url = %s",
+            (project_id, env_name, base_url, base_url)
+        )
 
-    projects_data[project_name]['envs'][env_name] = {'base_url': base_url}
+        # 如果是第一个环境，自动设为当前环境
+        if not current_env:
+            db_handler.execute("UPDATE projects SET current_env = %s WHERE id = %s", (env_name, project_id))
 
-    # 如果是第一个环境，自动设为当前环境
-    if not projects_data[project_name].get('current_env'):
-        projects_data[project_name]['current_env'] = env_name
-
-    if save_projects(projects_data):
         return jsonify({'success': True, 'message': f'环境 {env_name} 保存成功'})
-    else:
-        return jsonify({'success': False, 'error': '保存失败'})
+    except Exception as e:
+        logger.error(f"保存环境失败: {e}")
+        return jsonify({'success': False, 'error': f'保存失败: {str(e)}'})
 
 
 # 路由：删除项目环境
@@ -2749,24 +2774,33 @@ def project_env_delete(project_name, env_name):
     from urllib.parse import unquote
     project_name = unquote(project_name)
     env_name = unquote(env_name)
-    projects_data = get_projects()
-    if project_name not in projects_data:
-        return jsonify({'success': False, 'error': '项目不存在'}), 404
 
-    envs = projects_data[project_name].get('envs', {})
-    if env_name not in envs:
-        return jsonify({'success': False, 'error': f'环境不存在: {env_name}, 可用环境: {list(envs.keys())}'})
+    try:
+        db_handler._ensure_connection()
+        proj = db_handler.query("SELECT id, current_env FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            return jsonify({'success': False, 'error': '项目不存在'}), 404
+        project_id = proj[0]['id']
+        current_env = proj[0].get('current_env', '') or ''
 
-    del envs[env_name]
+        # 检查环境是否存在
+        env = db_handler.query("SELECT name FROM environments WHERE project_id = %s AND name = %s", (project_id, env_name))
+        if not env:
+            return jsonify({'success': False, 'error': f'环境不存在: {env_name}'})
 
-    # 如果删除的是当前环境，切换到第一个可用环境
-    if projects_data[project_name].get('current_env') == env_name:
-        projects_data[project_name]['current_env'] = list(envs.keys())[0] if envs else ''
+        # 删除环境
+        db_handler.execute("DELETE FROM environments WHERE project_id = %s AND name = %s", (project_id, env_name))
 
-    if save_projects(projects_data):
+        # 如果删除的是当前环境，切换到第一个可用环境
+        if current_env == env_name:
+            remaining = db_handler.query("SELECT name FROM environments WHERE project_id = %s ORDER BY id LIMIT 1", (project_id,))
+            new_env = remaining[0]['name'] if remaining else ''
+            db_handler.execute("UPDATE projects SET current_env = %s WHERE id = %s", (new_env, project_id))
+
         return jsonify({'success': True, 'message': f'环境 {env_name} 已删除'})
-    else:
-        return jsonify({'success': False, 'error': '保存失败'})
+    except Exception as e:
+        logger.error(f"删除环境失败: {e}")
+        return jsonify({'success': False, 'error': f'删除失败: {str(e)}'})
 
 
 # 路由：获取项目变量列表
@@ -2796,19 +2830,24 @@ def project_variables_save(project_name):
     if not var_key:
         return jsonify({'success': False, 'error': '变量名不能为空'})
 
-    projects_data = get_projects()
-    if project_name not in projects_data:
-        return jsonify({'success': False, 'error': '项目不存在'}), 404
+    try:
+        db_handler._ensure_connection()
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            return jsonify({'success': False, 'error': '项目不存在'}), 404
+        project_id = proj[0]['id']
 
-    if 'variables' not in projects_data[project_name]:
-        projects_data[project_name]['variables'] = {}
+        # 插入或更新变量（利用UNIQUE KEY uk_project_var）
+        db_handler.execute(
+            "INSERT INTO variables (project_id, name, value) VALUES (%s, %s, %s) "
+            "ON DUPLICATE KEY UPDATE value = %s",
+            (project_id, var_key, var_value, var_value)
+        )
 
-    projects_data[project_name]['variables'][var_key] = var_value
-
-    if save_projects(projects_data):
         return jsonify({'success': True, 'message': f'变量 {var_key} 保存成功'})
-    else:
-        return jsonify({'success': False, 'error': '保存失败'})
+    except Exception as e:
+        logger.error(f"保存变量失败: {e}")
+        return jsonify({'success': False, 'error': f'保存失败: {str(e)}'})
 
 
 # 路由：删除项目变量
@@ -2818,20 +2857,24 @@ def project_variables_delete(project_name, var_key):
     from urllib.parse import unquote
     project_name = unquote(project_name)
     var_key = unquote(var_key)
-    projects_data = get_projects()
-    if project_name not in projects_data:
-        return jsonify({'success': False, 'error': '项目不存在'}), 404
 
-    variables = projects_data[project_name].get('variables', {})
-    if var_key not in variables:
-        return jsonify({'success': False, 'error': f'变量不存在: {var_key}'})
+    try:
+        db_handler._ensure_connection()
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            return jsonify({'success': False, 'error': '项目不存在'}), 404
+        project_id = proj[0]['id']
 
-    del variables[var_key]
+        var = db_handler.query("SELECT name FROM variables WHERE project_id = %s AND name = %s", (project_id, var_key))
+        if not var:
+            return jsonify({'success': False, 'error': f'变量不存在: {var_key}'})
 
-    if save_projects(projects_data):
+        db_handler.execute("DELETE FROM variables WHERE project_id = %s AND name = %s", (project_id, var_key))
+
         return jsonify({'success': True, 'message': f'变量 {var_key} 已删除'})
-    else:
-        return jsonify({'success': False, 'error': '保存失败'})
+    except Exception as e:
+        logger.error(f"删除变量失败: {e}")
+        return jsonify({'success': False, 'error': f'删除失败: {str(e)}'})
 
 
 # 路由：批量保存项目变量
@@ -2850,16 +2893,25 @@ def project_variables_batch_save(project_name):
     if not isinstance(variables, dict):
         return jsonify({'success': False, 'error': '变量数据格式错误'})
 
-    projects_data = get_projects()
-    if project_name not in projects_data:
-        return jsonify({'success': False, 'error': '项目不存在'}), 404
+    try:
+        db_handler._ensure_connection()
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            return jsonify({'success': False, 'error': '项目不存在'}), 404
+        project_id = proj[0]['id']
 
-    projects_data[project_name]['variables'] = variables
+        # 先删除旧变量，再批量插入新变量
+        db_handler.execute("DELETE FROM variables WHERE project_id = %s", (project_id,))
+        for key, value in variables.items():
+            db_handler.execute(
+                "INSERT INTO variables (project_id, name, value) VALUES (%s, %s, %s)",
+                (project_id, key, value)
+            )
 
-    if save_projects(projects_data):
         return jsonify({'success': True, 'message': '变量保存成功'})
-    else:
-        return jsonify({'success': False, 'error': '保存失败'})
+    except Exception as e:
+        logger.error(f"批量保存变量失败: {e}")
+        return jsonify({'success': False, 'error': f'保存失败: {str(e)}'})
 
 
 # 路由：批量执行模块下所有测试

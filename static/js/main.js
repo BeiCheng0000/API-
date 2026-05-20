@@ -148,10 +148,11 @@ function loadProjectEnv(projectName) {
         .then(data => {
             if (!data.success) return;
 
-            // 使用项目名称作为ID的一部分，确保每个项目的环境栏独立
-            const envBarId = 'projectEnvBar-' + projectName.replace(/\s+/g, '_');
-            const envBar = document.getElementById(envBarId);
+            const envBar = document.getElementById('projectEnvBar');
             if (!envBar) return;
+
+            // 显示环境栏
+            envBar.style.display = '';
 
             let html = '<div class="d-flex align-items-center gap-2 flex-wrap">';
             html += '<i class="bi bi-globe2 text-muted"></i>';
@@ -161,7 +162,7 @@ function loadProjectEnv(projectName) {
                 html += '<span class="text-muted small">暂无环境配置</span>';
             } else {
                 const safeProjName = escapeHtml(projectName);
-                html += '<select class="form-select form-select-sm" style="width:auto;min-width:90px;" onchange="switchProjectEnv(\'' + safeProjName + '\', this.value)">';
+                html += '<select class="form-select form-select-sm" style="width:auto;min-width:90px;" onchange="switchProjectEnv(\'' + safeProjName + '\', this.value); loadProjectEnv(\'' + safeProjName + '\')">';
                 data.env_list.forEach(env => {
                     const selected = env.name === data.current_env ? ' selected' : '';
                     html += '<option value="' + escapeHtml(env.name) + '"' + selected + '>' + escapeHtml(env.name) + '</option>';
@@ -172,26 +173,10 @@ function loadProjectEnv(projectName) {
                 }
             }
 
-            html += '<button type="button" class="btn btn-sm btn-outline-primary" id="btnManageEnv" title="管理环境"><i class="bi bi-gear"></i></button>';
-            html += '<button type="button" class="btn btn-sm btn-outline-secondary" id="btnManageVars" title="管理变量"><i class="bi bi-braces"></i> 变量</button>';
+            html += '<button type="button" class="btn btn-sm btn-outline-primary" onclick="showProjectEnvModal(\'' + escapeHtml(projectName) + '\')" title="管理环境"><i class="bi bi-gear"></i></button>';
+            html += '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="showProjectVarModal(\'' + escapeHtml(projectName) + '\')" title="管理变量"><i class="bi bi-braces"></i> 变量</button>';
             html += '</div>';
             envBar.innerHTML = html;
-
-            // Bind env manage button
-            const btnManageEnv = document.getElementById('btnManageEnv');
-            if (btnManageEnv) {
-                btnManageEnv.addEventListener('click', function() {
-                    showProjectEnvModal(projectName);
-                });
-            }
-
-            // Bind variable manage button
-            const btnManageVars = document.getElementById('btnManageVars');
-            if (btnManageVars) {
-                btnManageVars.addEventListener('click', function() {
-                    showProjectVarModal(projectName);
-                });
-            }
         })
         .catch(err => {
             console.error('加载项目环境配置失败:', err);
@@ -217,6 +202,10 @@ function switchProjectEnv(projectName, envName) {
     .then(data => {
         if (data.success) {
             showToast('成功', data.message, 'success');
+            // 刷新环境栏
+            if (typeof loadProjectEnv === 'function') {
+                loadProjectEnv(projectName);
+            }
         } else {
             showToast('错误', data.error, 'danger');
         }

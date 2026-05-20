@@ -543,6 +543,11 @@ function selectModule(projectName, moduleName) {
 
     // 加载接口列表
     loadApisList(projectName, moduleName);
+
+    // 加载环境栏
+    if (typeof loadProjectEnv === 'function') {
+        loadProjectEnv(projectName);
+    }
 }
 
 /**
