@@ -28,8 +28,8 @@
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="#debug" onclick="switchPage('debug', this)">
-                            <i class="bi bi-bug me-1"></i>调试
+                        <a class="nav-link" href="#scheduler" onclick="switchPage('scheduler', this)">
+                            <i class="bi bi-clock-history me-1"></i>定时任务
                         </a>
                     </li>
                     <li class="nav-item">
@@ -110,61 +110,39 @@
             </div>
         </div>
 
-        <!-- 调试页面 -->
-        <div id="page-debug" class="page-content">
+        <!-- 定时任务页面 -->
+        <div id="page-scheduler" class="page-content">
             <div class="container-fluid py-4">
-                <h5 class="mb-3">接口调试</h5>
-                <div class="card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">定时任务</h5>
+                    <span class="badge bg-primary" id="schedulerCount">0</span>
+                </div>
+
+                <!-- 项目/模块筛选器 -->
+                <div class="card mb-3">
                     <div class="card-body">
-                        <form id="debugForm">
-                            <div class="mb-3">
-                                <label class="form-label">请求方法</label>
-                                <select class="form-select" id="debugMethod">
-                                    <option value="GET">GET</option>
-                                    <option value="POST">POST</option>
-                                    <option value="PUT">PUT</option>
-                                    <option value="DELETE">DELETE</option>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <select class="form-select form-select-sm" id="schedulerFilterProject" onchange="onSchedulerProjectChange()">
+                                    <option value="">所有项目</option>
                                 </select>
                             </div>
-                            <div class="mb-3">
-                                <label class="form-label">URL</label>
-                                <input type="text" class="form-control" id="debugUrl" placeholder="https://api.example.com/endpoint">
+                            <div class="col-6">
+                                <select class="form-select form-select-sm" id="schedulerFilterModule" onchange="loadSchedulerJobs()">
+                                    <option value="">所有模块</option>
+                                </select>
                             </div>
-                            <div class="mb-3">
-                                <label class="form-label">请求头 (JSON)</label>
-                                <textarea class="form-control" id="debugHeaders" rows="3" placeholder='{"Content-Type": "application/json"}'></textarea>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">请求体 (JSON)</label>
-                                <textarea class="form-control" id="debugData" rows="5" placeholder='{"key": "value"}'></textarea>
-                            </div>
-                            <button type="button" class="btn btn-primary w-100" onclick="sendDebugRequest()">
-                                <i class="bi bi-play-fill me-1"></i>发送请求
-                            </button>
-                        </form>
+                        </div>
                     </div>
                 </div>
 
-                <!-- 响应结果 -->
-                <div id="debugResult" class="mt-3" style="display: none;">
-                    <div class="card">
-                        <div class="card-header">
-                            <h6 class="mb-0">响应结果</h6>
+                <!-- 定时任务列表 -->
+                <div id="schedulerList" class="scheduler-cards">
+                    <div class="text-center py-5">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">加载中...</span>
                         </div>
-                        <div class="card-body">
-                            <div class="mb-2">
-                                <strong>状态码:</strong>
-                                <span id="debugStatusCode" class="badge"></span>
-                            </div>
-                            <div class="mb-2">
-                                <strong>响应时间:</strong>
-                                <span id="debugResponseTime"></span> ms
-                            </div>
-                            <div>
-                                <strong>响应体:</strong>
-                                <pre id="debugResponseBody" class="mt-2 p-3 bg-light rounded"></pre>
-                            </div>
-                        </div>
+                        <p class="text-muted mt-3">加载定时任务...</p>
                     </div>
                 </div>
             </div>
@@ -251,9 +229,9 @@
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link" href="#debug" onclick="switchPage('debug', this)">
-                        <i class="bi bi-bug d-block mb-1"></i>
-                        <span>调试</span>
+                    <a class="nav-link" href="#scheduler" onclick="switchPage('scheduler', this)">
+                        <i class="bi bi-clock-history d-block mb-1"></i>
+                        <span>定时任务</span>
                     </a>
                 </li>
                 <li class="nav-item">

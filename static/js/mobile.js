@@ -54,6 +54,11 @@ function switchPage(pageName, element) {
         element.classList.add('active');
     }
 
+    // 切换到定时任务页面时重新加载筛选器和列表
+    if (pageName === 'scheduler') {
+        loadSchedulerFilter();
+    }
+
     // 关闭移动端导航菜单
     const navbarCollapse = document.getElementById('navbarNav');
     if (navbarCollapse && navbarCollapse.classList.contains('show')) {
@@ -860,80 +865,363 @@ function showAddApiModal(projectName, moduleName) {
     safeShowModal(document.getElementById('commonModal'));
 }
 
-// 发送调试请求
-async function sendDebugRequest() {
-    const method = document.getElementById('debugMethod').value;
-    const url = document.getElementById('debugUrl').value;
-    const headers = document.getElementById('debugHeaders').value;
-    const data = document.getElementById('debugData').value;
+// ========== 定时任务相关功能 ==========
 
-    if (!url) {
-        alert('请输入URL');
-        return;
+// 定时任务筛选器：项目切换时联动模块列表（使用数据库数据）
+async function onSchedulerProjectChange() {
+    const project = document.getElementById('schedulerFilterProject').value;
+    const moduleFilter = document.getElementById('schedulerFilterModule');
+
+    // 清空模块筛选器
+    moduleFilter.innerHTML = '<option value="">所有模块</option>';
+
+    if (project && _dbProjectsData) {
+        const modules = getDbModuleNames(_dbProjectsData, project);
+        modules.forEach(mod => {
+            const option = document.createElement('option');
+            option.value = mod;
+            option.textContent = mod;
+            moduleFilter.appendChild(option);
+        });
+        // 默认选中第一个模块
+        if (modules.length > 0) {
+            moduleFilter.value = modules[0];
+        }
     }
 
-    try {
-        // 解析JSON数据
-        const headersObj = headers ? JSON.parse(headers) : {};
-        const dataObj = data ? JSON.parse(data) : {};
+    // 刷新定时任务列表
+    loadSchedulerJobs();
+}
 
-        // 显示加载状态
-        const submitBtn = document.querySelector('#debugForm button[type="button"]');
-        const originalText = submitBtn.innerHTML;
-        submitBtn.disabled = true;
-        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>发送中...';
+// 加载定时任务筛选器（使用数据库项目/模块数据）
+async function loadSchedulerFilter() {
+    const projectFilter = document.getElementById('schedulerFilterProject');
 
-        // 发送请求
-        const response = await fetch('/api/debug', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                method: method,
-                url: url,
-                headers: headersObj,
-                data: dataObj
-            })
+    // 确保数据库项目数据已加载
+    const projectsData = await loadDbProjectsData();
+    const projects = getDbProjectNames(projectsData);
+
+    // 清空并重新填充项目筛选器
+    projectFilter.innerHTML = '<option value="">所有项目</option>';
+
+    if (projects.length > 0) {
+        projects.forEach(project => {
+            const option = document.createElement('option');
+            option.value = project;
+            option.textContent = project;
+            projectFilter.appendChild(option);
         });
+        // 默认选中第一个项目
+        projectFilter.value = projects[0];
 
-        const result = await response.json();
-
-        // 显示结果
-        const resultDiv = document.getElementById('debugResult');
-        const statusCode = document.getElementById('debugStatusCode');
-        const responseTime = document.getElementById('debugResponseTime');
-        const responseBody = document.getElementById('debugResponseBody');
-
-        resultDiv.style.display = 'block';
-        statusCode.textContent = result.status_code;
-        statusCode.className = 'badge ' + (result.status_code >= 200 && result.status_code < 300 ? 'bg-success' : 'bg-danger');
-        responseTime.textContent = result.response_time || 0;
-        responseBody.textContent = JSON.stringify(result.data, null, 2);
-
-        // 恢复按钮状态
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = originalText;
-
-    } catch (error) {
-        alert('请求失败: ' + error.message);
-
-        // 恢复按钮状态
-        const submitBtn = document.querySelector('#debugForm button[type="button"]');
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = '<i class="bi bi-play-fill me-1"></i>发送请求';
+        // 联动加载模块列表
+        await onSchedulerProjectChange();
+    } else {
+        // 没有项目时直接加载列表
+        loadSchedulerJobs();
     }
 }
 
+// 加载定时任务列表（支持筛选）
+async function loadSchedulerJobs() {
+    try {
+        const response = await fetch('/scheduler/list');
+        const data = await response.json();
+
+        const schedulerList = document.getElementById('schedulerList');
+        const schedulerCount = document.getElementById('schedulerCount');
+        const filterProject = document.getElementById('schedulerFilterProject').value;
+        const filterModule = document.getElementById('schedulerFilterModule').value;
+
+        if (Array.isArray(data)) {
+            // 根据筛选条件过滤
+            let filtered = data;
+            if (filterProject) {
+                filtered = filtered.filter(j => j.project_name === filterProject);
+            }
+            if (filterModule) {
+                filtered = filtered.filter(j => j.module_name === filterModule);
+            }
+
+            schedulerCount.textContent = filtered.length;
+
+            if (filtered.length === 0) {
+                schedulerList.innerHTML = `
+                    <div class="text-center py-5">
+                        <i class="bi bi-clock-history text-muted" style="font-size: 3rem;"></i>
+                        <p class="text-muted mt-3">暂无定时任务</p>
+                    </div>
+                `;
+            } else {
+                schedulerList.innerHTML = filtered.map(job => {
+                    const nameParts = (job.name || '').split(' - ');
+                    const pathPart = nameParts[0] || '';
+                    const caseName = nameParts[1] || '未命名';
+                    const cronDisplay = formatCronExpression(job.cron_expression);
+
+                    return `
+                    <div class="card scheduler-card mb-3" data-job-id="${job.id}">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div class="flex-grow-1">
+                                    <h6 class="card-title mb-1">${caseName}</h6>
+                                    <small class="text-muted"><i class="bi bi-folder2 me-1"></i>${pathPart}</small>
+                                </div>
+                            </div>
+                            <div class="scheduler-meta mb-2">
+                                <div class="d-flex align-items-center mb-1">
+                                    <i class="bi bi-clock-history me-1 text-info"></i>
+                                    <code class="cron-code">${job.cron_expression || '未知'}</code>
+                                    <span class="cron-desc">${cronDisplay}</span>
+                                </div>
+                                <small class="text-muted"><i class="bi bi-calendar-event me-1"></i>下次执行: ${job.next_run_time || '未计划'}</small>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-outline-primary flex-fill" onclick="showEditSchedulerModal('${job.id}', '${job.project_name || ''}', '${job.module_name || ''}', ${job.api_id || 0}, '${job.cron_expression || ''}')">
+                                    <i class="bi bi-pencil me-1"></i>编辑
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger flex-fill" onclick="deleteSchedulerJob('${job.id}')">
+                                    <i class="bi bi-trash me-1"></i>删除
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }).join('');
+            }
+        }
+    } catch (error) {
+        console.error('加载定时任务失败:', error);
+        document.getElementById('schedulerList').innerHTML = `
+            <div class="text-center py-5">
+                <i class="bi bi-exclamation-circle text-danger" style="font-size: 3rem;"></i>
+                <p class="text-muted mt-3">加载定时任务失败</p>
+            </div>
+        `;
+    }
+}
+
+// 格式化cron表达式为可读文本（与网页端 projects.js 保持一致）
+function formatCronExpression(cronExpr) {
+    if (!cronExpr) return '未知';
+    const parts = cronExpr.trim().split(/\s+/);
+    if (parts.length !== 5) return cronExpr;
+
+    const [minute, hour, day, month, weekday] = parts;
+
+    // 每N分钟
+    if (minute.startsWith('*/') && hour === '*' && day === '*' && month === '*' && weekday === '*') {
+        return `每${minute.slice(2)}分钟`;
+    }
+    // 每分钟
+    if (minute === '*' && hour === '*' && day === '*' && month === '*' && weekday === '*') {
+        return '每分钟';
+    }
+    // 每N小时
+    if (hour.startsWith('*/') && minute === '0' && day === '*' && month === '*' && weekday === '*') {
+        return `每${hour.slice(2)}小时`;
+    }
+    // 每小时
+    if (minute === '0' && hour === '*' && day === '*' && month === '*' && weekday === '*') {
+        return '每小时';
+    }
+    // 每天固定时间
+    if (minute !== '*' && hour !== '*' && day === '*' && month === '*' && weekday === '*') {
+        return `每天 ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+    }
+    // 每周几固定时间
+    if (weekday !== '*' && minute !== '*' && hour !== '*' && day === '*' && month === '*') {
+        const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+        const dayNames = weekday.split(',').map(d => weekdays[parseInt(d)] || '周' + d).join('、');
+        return `${dayNames} ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+    }
+    // 工作日
+    if (weekday === '1-5' && minute !== '*' && hour !== '*' && day === '*' && month === '*') {
+        return `工作日 ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+    }
+    // 每月指定日期时间
+    if (day !== '*' && minute !== '*' && hour !== '*' && month === '*' && weekday === '*') {
+        return `每月${day}日 ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+    }
+
+    return cronExpr;
+}
+
+// 显示编辑定时任务模态框
+function showEditSchedulerModal(jobId, projectName, moduleName, apiId, cronExpression) {
+    const modalTitle = document.getElementById('commonModalTitle');
+    const modalBody = document.getElementById('commonModalBody');
+    const modalConfirm = document.getElementById('commonModalConfirm');
+
+    modalTitle.textContent = '编辑定时任务';
+    modalBody.innerHTML = `
+        <form id="editSchedulerForm">
+            <div class="mb-3">
+                <label class="form-label">项目</label>
+                <input type="text" class="form-control" value="${projectName}" readonly>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">模块</label>
+                <input type="text" class="form-control" value="${moduleName}" readonly>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Cron 表达式</label>
+                <input type="text" class="form-control" id="editCronExpr" value="${cronExpression}" placeholder="分 时 日 月 周，如: 0 * * * *">
+                <div class="form-text">格式：分 时 日 月 周（如：0 */2 * * * 表示每2小时执行）</div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">常用表达式</label>
+                <div class="d-flex flex-wrap gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('editCronExpr').value='*/5 * * * *'">每5分钟</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('editCronExpr').value='0 * * * *'">每小时</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('editCronExpr').value='0 */2 * * *'">每2小时</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('editCronExpr').value='0 8 * * *'">每天8点</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('editCronExpr').value='0 9 * * 1-5'">工作日9点</button>
+                </div>
+            </div>
+        </form>
+    `;
+
+    modalConfirm.style.display = 'block';
+    modalConfirm.textContent = '保存';
+    modalConfirm.onclick = async () => {
+        const newCronExpr = document.getElementById('editCronExpr').value.trim();
+
+        if (!newCronExpr) {
+            showToast('错误', 'Cron表达式不能为空');
+            return;
+        }
+
+        const cronFields = newCronExpr.split(/\s+/);
+        if (cronFields.length !== 5) {
+            showToast('错误', 'Cron表达式格式错误：需要5个字段（分 时 日 月 周）');
+            return;
+        }
+
+        try {
+            const formData = new FormData();
+            formData.append('job_id', jobId);
+            formData.append('project_name', projectName);
+            formData.append('module_name', moduleName);
+            formData.append('case_index', apiId);
+            formData.append('cron_expression', newCronExpr);
+
+            const response = await fetch('/scheduler/update', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('成功', '定时任务更新成功');
+                safeHideModal();
+                loadSchedulerJobs();
+                loadSchedulerCount();
+                loadStatistics();
+            } else {
+                showToast('错误', result.message || '更新定时任务失败');
+            }
+        } catch (error) {
+            showToast('错误', '更新定时任务失败: ' + error.message);
+        }
+    };
+
+    safeShowModal(document.getElementById('commonModal'));
+}
+
+// 删除定时任务
+function deleteSchedulerJob(jobId) {
+    const modalTitle = document.getElementById('commonModalTitle');
+    const modalBody = document.getElementById('commonModalBody');
+    const modalConfirm = document.getElementById('commonModalConfirm');
+
+    modalTitle.textContent = '确认删除';
+    modalBody.innerHTML = `<p>确定要删除该定时任务吗？此操作不可恢复。</p>`;
+
+    modalConfirm.style.display = 'block';
+    modalConfirm.textContent = '删除';
+    modalConfirm.className = 'btn btn-danger';
+
+    modalConfirm.onclick = async () => {
+        try {
+            const response = await fetch(`/scheduler/delete/${encodeURIComponent(jobId)}`);
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('成功', '定时任务删除成功');
+                safeHideModal();
+                loadSchedulerJobs();
+                loadSchedulerCount();
+                loadStatistics();
+            } else {
+                showToast('错误', result.error || '删除定时任务失败');
+            }
+        } catch (error) {
+            showToast('错误', '删除定时任务失败: ' + error.message);
+        }
+    };
+
+    safeShowModal(document.getElementById('commonModal'));
+}
+
+// 全局项目/模块数据缓存（来自数据库 projects/modules 表）
+let _dbProjectsData = null;
+
+/**
+ * 从数据库加载项目/模块数据（/projects/list 接口，基于 projects 和 modules 表）
+ * 缓存到 _dbProjectsData，供统计页面和定时任务页面的筛选器共用
+ */
+async function loadDbProjectsData() {
+    if (_dbProjectsData) return _dbProjectsData;
+    try {
+        const response = await fetch('/projects/list');
+        const data = await response.json();
+        _dbProjectsData = data;
+        return data;
+    } catch (error) {
+        console.error('加载数据库项目列表失败:', error);
+        return {};
+    }
+}
+
+/**
+ * 清除项目/模块数据缓存（在增删改操作后调用）
+ */
+function invalidateDbProjectsCache() {
+    _dbProjectsData = null;
+}
+
+/**
+ * 从缓存数据中获取项目名称列表
+ */
+function getDbProjectNames(data) {
+    return data ? Object.keys(data) : [];
+}
+
+/**
+ * 从缓存数据中获取指定项目的模块名称列表
+ */
+function getDbModuleNames(data, projectName) {
+    if (!data || !data[projectName]) return [];
+    return Object.keys(data[projectName].modules || {});
+}
+
 // 页面加载完成后初始化
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
+    // 先加载数据库项目/模块数据
+    const projectsData = await loadDbProjectsData();
+
     // 加载统计数据
     loadStatistics();
 
-    // 加载项目筛选器
-    loadProjectFilter();
+    // 填充统计页面的项目筛选器
+    fillStatisticsProjectFilter(projectsData);
 
-    // 监听项目筛选器变化
+    // 加载定时任务筛选器（会自动加载列表，默认选中第一个项目和模块）
+    loadSchedulerFilter();
+
+    // 监听统计页面项目筛选器变化
     document.getElementById('filterProject').addEventListener('change', async function() {
         const project = this.value;
         const moduleFilter = document.getElementById('filterModule');
@@ -942,22 +1230,13 @@ document.addEventListener('DOMContentLoaded', function() {
         moduleFilter.innerHTML = '<option value="">所有模块</option>';
 
         if (project) {
-            // 加载该项目的模块列表
-            try {
-                const response = await fetch(`/statistics/modules?project=${encodeURIComponent(project)}`);
-                const data = await response.json();
-
-                if (data.modules && data.modules.length > 0) {
-                    data.modules.forEach(module => {
-                        const option = document.createElement('option');
-                        option.value = module;
-                        option.textContent = module;
-                        moduleFilter.appendChild(option);
-                    });
-                }
-            } catch (error) {
-                console.error('加载模块列表失败:', error);
-            }
+            const modules = getDbModuleNames(_dbProjectsData, project);
+            modules.forEach(mod => {
+                const option = document.createElement('option');
+                option.value = mod;
+                option.textContent = mod;
+                moduleFilter.appendChild(option);
+            });
         }
 
         // 重新加载统计数据
@@ -965,25 +1244,18 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// 加载项目筛选器
-async function loadProjectFilter() {
-    try {
-        const response = await fetch('/statistics/projects');
-        const data = await response.json();
+// 填充统计页面的项目筛选器
+function fillStatisticsProjectFilter(projectsData) {
+    const projectFilter = document.getElementById('filterProject');
+    if (!projectFilter) return;
 
-        const projectFilter = document.getElementById('filterProject');
-
-        if (data.projects && data.projects.length > 0) {
-            data.projects.forEach(project => {
-                const option = document.createElement('option');
-                option.value = project;
-                option.textContent = project;
-                projectFilter.appendChild(option);
-            });
-        }
-    } catch (error) {
-        console.error('加载项目列表失败:', error);
-    }
+    const projects = getDbProjectNames(projectsData);
+    projects.forEach(project => {
+        const option = document.createElement('option');
+        option.value = project;
+        option.textContent = project;
+        projectFilter.appendChild(option);
+    });
 }
 
 // 加载统计数据

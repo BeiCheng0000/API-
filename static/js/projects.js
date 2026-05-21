@@ -1038,6 +1038,56 @@ function selectSchedulerModule(projectName, moduleName) {
 /**
  * 按模块加载定时任务列表
  */
+/**
+ * 格式化Cron表达式为中文可读文本
+ * @param {string} cronExpr - Cron表达式（5字段：分 时 日 月 周）
+ * @returns {string} 可读化文本
+ */
+function formatCronExpression(cronExpr) {
+    if (!cronExpr) return '未知';
+    const parts = cronExpr.trim().split(/\s+/);
+    if (parts.length !== 5) return cronExpr;
+
+    const [minute, hour, day, month, weekday] = parts;
+
+    // 每N分钟
+    if (minute.startsWith('*/') && hour === '*' && day === '*' && month === '*' && weekday === '*') {
+        return `每${minute.slice(2)}分钟`;
+    }
+    // 每分钟
+    if (minute === '*' && hour === '*' && day === '*' && month === '*' && weekday === '*') {
+        return '每分钟';
+    }
+    // 每N小时
+    if (hour.startsWith('*/') && minute === '0' && day === '*' && month === '*' && weekday === '*') {
+        return `每${hour.slice(2)}小时`;
+    }
+    // 每小时
+    if (minute === '0' && hour === '*' && day === '*' && month === '*' && weekday === '*') {
+        return '每小时';
+    }
+    // 每天固定时间
+    if (minute !== '*' && hour !== '*' && day === '*' && month === '*' && weekday === '*') {
+        return `每天 ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+    }
+    // 每周几固定时间
+    if (weekday !== '*' && minute !== '*' && hour !== '*' && day === '*' && month === '*') {
+        const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+        const dayNames = weekday.split(',').map(d => weekdays[parseInt(d)] || '周' + d).join('、');
+        return `${dayNames} ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+    }
+    // 工作日
+    if (weekday === '1-5' && minute !== '*' && hour !== '*' && day === '*' && month === '*') {
+        return `工作日 ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+    }
+    // 指定日期时间
+    if (day !== '*' && minute !== '*' && hour !== '*' && month === '*' && weekday === '*') {
+        return `每月${day}日 ${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+    }
+
+    return cronExpr;
+}
+
 function loadSchedulerJobsByModule(projectName, moduleName) {
     fetchSchedulerList()
     .then(jobs => {
@@ -1066,7 +1116,7 @@ function loadSchedulerJobsByModule(projectName, moduleName) {
                 html += `<tr>
                     <td>${escapeHtml(job.name)}</td>
                     <td>${job.next_run_time || '未知'}</td>
-                    <td><code>${escapeHtml(job.cron_expression || job.trigger)}</code></td>
+                    <td><code>${escapeHtml(job.cron_expression || job.trigger)}</code><br><small class="text-muted">${formatCronExpression(job.cron_expression || job.trigger)}</small></td>
                     <td>
                         <button class="btn btn-sm btn-warning me-1" onclick="editScheduler('${job.id}','${escapeHtml(job.project_name)}','${escapeHtml(job.module_name)}',${job.api_id},'${escapeHtml(job.cron_expression)}')" title="编辑"><i class="bi bi-pencil"></i></button>
                         <button class="btn btn-sm btn-danger" onclick="deleteScheduler('${job.id}')" title="删除"><i class="bi bi-trash"></i></button>
