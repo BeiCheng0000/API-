@@ -223,6 +223,132 @@ def _save_scheduler_jobs():
         logger.error(f"保存定时任务配置失败: {e}")
 
 
+def _update_scheduler_jobs_project_name(old_name: str, new_name: str) -> None:
+    """
+    项目重命名时，同步更新相关定时任务的 project_name
+
+    Args:
+        old_name: 旧项目名称
+        new_name: 新项目名称
+    """
+    try:
+        # 先收集需要更新的任务信息，避免遍历时修改
+        jobs_to_update = []
+        for job in scheduler.get_jobs():
+            if job.func == scheduled_test_job and len(job.args) > 0 and job.args[0] == old_name:
+                jobs_to_update.append({
+                    'id': job.id,
+                    'args': list(job.args),
+                    'name': job.name,
+                    'cron_expr': _extract_cron_expression(job.trigger)
+                })
+        # 统一更新
+        for job_info in jobs_to_update:
+            new_args = job_info['args']
+            new_args[0] = new_name
+            new_job_name = job_info['name'].replace(f"{old_name}/", f"{new_name}/", 1)
+            scheduler.remove_job(job_info['id'])
+            scheduler.add_job(
+                func=scheduled_test_job,
+                trigger=CronTrigger.from_crontab(job_info['cron_expr']),
+                id=job_info['id'],
+                args=new_args,
+                name=new_job_name
+            )
+        if jobs_to_update:
+            _save_scheduler_jobs()
+            logger.info(f"项目重命名({old_name} -> {new_name})，已同步更新 {len(jobs_to_update)} 个定时任务")
+    except Exception as e:
+        logger.error(f"更新定时任务项目名称失败: {e}", exc_info=True)
+
+
+def _update_scheduler_jobs_module_name(project_name: str, old_name: str, new_name: str) -> None:
+    """
+    模块重命名时，同步更新相关定时任务的 module_name
+
+    Args:
+        project_name: 项目名称
+        old_name: 旧模块名称
+        new_name: 新模块名称
+    """
+    try:
+        # 先收集需要更新的任务信息，避免遍历时修改
+        jobs_to_update = []
+        for job in scheduler.get_jobs():
+            if (job.func == scheduled_test_job and len(job.args) > 1
+                    and job.args[0] == project_name and job.args[1] == old_name):
+                jobs_to_update.append({
+                    'id': job.id,
+                    'args': list(job.args),
+                    'name': job.name,
+                    'cron_expr': _extract_cron_expression(job.trigger)
+                })
+        # 统一更新
+        for job_info in jobs_to_update:
+            new_args = job_info['args']
+            new_args[1] = new_name
+            new_job_name = job_info['name'].replace(f"/{old_name} ", f"/{new_name} ", 1)
+            scheduler.remove_job(job_info['id'])
+            scheduler.add_job(
+                func=scheduled_test_job,
+                trigger=CronTrigger.from_crontab(job_info['cron_expr']),
+                id=job_info['id'],
+                args=new_args,
+                name=new_job_name
+            )
+        if jobs_to_update:
+            _save_scheduler_jobs()
+            logger.info(f"模块重命名({project_name}/{old_name} -> {project_name}/{new_name})，已同步更新 {len(jobs_to_update)} 个定时任务")
+    except Exception as e:
+        logger.error(f"更新定时任务模块名称失败: {e}", exc_info=True)
+
+
+def _delete_scheduler_jobs_by_project(project_name: str) -> None:
+    """
+    删除项目时，清理关联的所有定时任务
+
+    Args:
+        project_name: 项目名称
+    """
+    try:
+        # 先收集需要删除的任务ID，避免遍历时修改
+        job_ids_to_delete = []
+        for job in scheduler.get_jobs():
+            if job.func == scheduled_test_job and len(job.args) > 0 and job.args[0] == project_name:
+                job_ids_to_delete.append(job.id)
+        for job_id in job_ids_to_delete:
+            scheduler.remove_job(job_id)
+        if job_ids_to_delete:
+            _save_scheduler_jobs()
+            logger.info(f"删除项目({project_name})，已清理 {len(job_ids_to_delete)} 个关联定时任务")
+    except Exception as e:
+        logger.error(f"清理项目定时任务失败: {e}", exc_info=True)
+
+
+def _delete_scheduler_jobs_by_module(project_name: str, module_name: str) -> None:
+    """
+    删除模块时，清理关联的所有定时任务
+
+    Args:
+        project_name: 项目名称
+        module_name: 模块名称
+    """
+    try:
+        # 先收集需要删除的任务ID，避免遍历时修改
+        job_ids_to_delete = []
+        for job in scheduler.get_jobs():
+            if (job.func == scheduled_test_job and len(job.args) > 1
+                    and job.args[0] == project_name and job.args[1] == module_name):
+                job_ids_to_delete.append(job.id)
+        for job_id in job_ids_to_delete:
+            scheduler.remove_job(job_id)
+        if job_ids_to_delete:
+            _save_scheduler_jobs()
+            logger.info(f"删除模块({project_name}/{module_name})，已清理 {len(job_ids_to_delete)} 个关联定时任务")
+    except Exception as e:
+        logger.error(f"清理模块定时任务失败: {e}", exc_info=True)
+
+
 def _extract_cron_expression(trigger):
     """从CronTrigger中提取标准cron表达式（分 时 日 月 周）"""
     import re
@@ -1363,6 +1489,9 @@ def project_delete(project_name):
         db_handler.execute("DELETE FROM projects WHERE id = %s", (proj_id,))
         logger.info("项目删除成功")
 
+        # 删除关联的定时任务
+        _delete_scheduler_jobs_by_project(project_name)
+
         return jsonify({'success': True, 'message': '项目删除成功'})
     except Exception as e:
         logger.error(f"删除项目失败: {e}", exc_info=True)
@@ -1410,6 +1539,10 @@ def project_update():
             (project_name, project_desc, proj_id)
         )
         logger.info("项目更新成功")
+
+        # 如果修改了项目名称，同步更新相关定时任务
+        if old_name != project_name:
+            _update_scheduler_jobs_project_name(old_name, project_name)
 
         return jsonify({'success': True, 'message': '项目更新成功'})
     except Exception as e:
@@ -1524,6 +1657,9 @@ def module_delete(project_name, module_name):
         db_handler.execute("DELETE FROM modules WHERE id = %s", (mod_id,))
         logger.info("模块删除成功")
 
+        # 删除关联的定时任务
+        _delete_scheduler_jobs_by_module(project_name, module_name)
+
         return jsonify({'success': True, 'message': '模块删除成功'})
     except Exception as e:
         logger.error(f"删除模块失败: {e}", exc_info=True)
@@ -1626,6 +1762,10 @@ def module_update(project_name):
             (module_name, module_desc, mod_id)
         )
         logger.info("模块更新成功")
+
+        # 如果修改了模块名称，同步更新相关定时任务
+        if old_name != module_name:
+            _update_scheduler_jobs_module_name(project_name, old_name, module_name)
 
         return jsonify({'success': True, 'message': '模块更新成功'})
     except Exception as e:
