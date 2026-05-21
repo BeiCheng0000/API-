@@ -58,6 +58,11 @@ function switchPage(pageName, element) {
     if (pageName === 'scheduler') {
         loadSchedulerFilter();
     }
+    
+    // 切换到统计页面时重新加载数据
+    if (pageName === 'statistics') {
+        loadStatistics();
+    }
 
     // 关闭移动端导航菜单
     const navbarCollapse = document.getElementById('navbarNav');
@@ -402,7 +407,10 @@ function deleteProject(projectName) {
 function showToast(title, message) {
     const toastTitle = document.getElementById('toastTitle');
     const toastBody = document.getElementById('toastBody');
-    const toast = new bootstrap.Toast(document.getElementById('toast'));
+    const toastElement = document.getElementById('toast');
+    const toast = new bootstrap.Toast(toastElement, {
+        delay: 1000 // 设置显示时间为1秒
+    });
 
     toastTitle.textContent = title;
     toastBody.textContent = message;
@@ -1269,6 +1277,32 @@ async function loadStatistics() {
         await loadStatisticsList(1);
     } catch (error) {
         console.error('加载统计数据失败:', error);
+    }
+}
+
+// 刷新统计数据（按当前筛选项刷新）
+async function refreshStatistics() {
+    const btn = document.getElementById('refreshStatisticsBtn');
+    if (btn) {
+        // 添加旋转动画
+        btn.classList.add('spinning');
+        btn.disabled = true;
+    }
+    
+    try {
+        // 加载统计列表（重置到第1页）
+        _statCurrentPage = 1;
+        await loadStatisticsList(1);
+        showToast('成功', '统计数据已刷新');
+    } catch (error) {
+        console.error('刷新统计数据失败:', error);
+        showToast('错误', '刷新统计数据失败: ' + error.message);
+    } finally {
+        // 移除旋转动画
+        if (btn) {
+            btn.classList.remove('spinning');
+            btn.disabled = false;
+        }
     }
 }
 

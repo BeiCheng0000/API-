@@ -557,3 +557,32 @@ body {
     padding: 0.35rem 0.5rem;
     border-radius: 0.5rem;
 }
+
+/* 刷新按钮旋转动画 */
+#refreshStatisticsBtn {
+    transition: transform 0.3s ease;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+#refreshStatisticsBtn.spinning {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* 确保按钮在移动端可见 */
+@media (max-width: 768px) {
+    #refreshStatisticsBtn {
+        font-size: 0.9rem;
+        padding: 0.35rem 0.75rem;
+        min-width: 36px;
+        height: 36px;
+    }
+}
