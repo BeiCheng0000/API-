@@ -386,6 +386,124 @@ body {
     margin-bottom: 0.25rem;
 }
 
+/* 统计记录卡片 */
+.stat-record-card {
+    border: none;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.stat-record-card:active {
+    background-color: #f8f9fa;
+    transform: scale(0.98);
+}
+
+.stat-record-card .card-body {
+    padding: 0.75rem 1rem;
+}
+
+.stat-record-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 60%;
+}
+
+.stat-method-badge {
+    font-size: 0.7rem;
+    padding: 0.25em 0.5em;
+}
+
+/* 统计列表分页 */
+#statPagination {
+    padding: 0.5rem 0;
+}
+
+#statPagination .btn:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+#statPageInfo {
+    font-size: 0.85rem;
+    min-width: 60px;
+    text-align: center;
+}
+
+.stat-source-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+}
+
+.stat-source-debug {
+    background: rgba(99, 102, 241, 0.12);
+    color: #6366f1;
+    border: 1px solid rgba(99, 102, 241, 0.25);
+}
+
+.stat-source-execute {
+    background: rgba(245, 158, 11, 0.12);
+    color: #d97706;
+    border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.stat-source-schedule {
+    background: rgba(16, 185, 129, 0.12);
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.stat-status-badge {
+    font-size: 0.7rem;
+    padding: 0.25em 0.5em;
+}
+
+.stat-record-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.stat-record-item {
+    font-size: 0.8rem;
+    color: #6c757d;
+}
+
+/* 统计详情 */
+.stat-detail-pre {
+    font-size: 0.75rem;
+    max-height: 180px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background-color: #f8f9fa;
+    padding: 0.75rem;
+    border-radius: 0.375rem;
+    margin-bottom: 0;
+}
+
+.stat-detail-item {
+    font-size: 0.85rem;
+    color: #495057;
+}
+
+.stat-detail .table-sm th,
+.stat-detail .table-sm td {
+    padding: 0.3rem 0.4rem;
+    font-size: 0.75rem;
+}
+
 /* 定时任务卡片 */
 .scheduler-card {
     border: none;

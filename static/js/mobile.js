@@ -1212,6 +1212,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     // 先加载数据库项目/模块数据
     const projectsData = await loadDbProjectsData();
 
+    // 初始化日期筛选器（默认今天）
+    initDateFilter();
+
     // 加载统计数据
     loadStatistics();
 
@@ -1261,59 +1264,100 @@ function fillStatisticsProjectFilter(projectsData) {
 // 加载统计数据
 async function loadStatistics() {
     try {
-        const response = await fetch('/api/top_stats');
-        const data = await response.json();
-
-        if (data.module_count !== undefined) {
-            document.getElementById('statModules').textContent = data.module_count;
-        }
-        if (data.api_count !== undefined) {
-            document.getElementById('statApis').textContent = data.api_count;
-        }
-        if (data.scheduler_count !== undefined) {
-            document.getElementById('statSchedulers').textContent = data.scheduler_count;
-        }
-
-        // 加载统计列表
-        await loadStatisticsList();
+        // 加载统计列表（重置到第1页）
+        _statCurrentPage = 1;
+        await loadStatisticsList(1);
     } catch (error) {
         console.error('加载统计数据失败:', error);
     }
 }
 
-// 加载统计列表
-async function loadStatisticsList() {
+// URL搜索防抖
+let _filterUrlTimer = null;
+function debounceFilterUrl() {
+    clearTimeout(_filterUrlTimer);
+    _filterUrlTimer = setTimeout(() => {
+        loadStatistics();
+    }, 500);
+}
+
+// 统计列表分页状态
+let _statCurrentPage = 1;
+let _statTotalPages = 1;
+let _statTotalRecords = 0;
+const _statPageSize = 15;
+
+// 初始化日期筛选器（默认今天）
+function initDateFilter() {
+    const today = new Date().toISOString().split('T')[0];
+    const dateStart = document.getElementById('filterDateStart');
+    const dateEnd = document.getElementById('filterDateEnd');
+    if (dateStart && !dateStart.value) dateStart.value = today;
+    if (dateEnd && !dateEnd.value) dateEnd.value = today;
+}
+
+// 加载统计列表（支持分页）
+async function loadStatisticsList(page) {
+    if (page === undefined) page = _statCurrentPage;
+    page = Math.max(1, page);
+
     try {
         const project = document.getElementById('filterProject').value;
         const module = document.getElementById('filterModule').value;
+        const dateStart = document.getElementById('filterDateStart').value;
+        const dateEnd = document.getElementById('filterDateEnd').value;
+        const status = document.getElementById('filterStatus').value;
+        const assertion = document.getElementById('filterAssertion').value;
+        const keyword = document.getElementById('filterUrl').value.trim();
 
-        let url = '/statistics/list?page=1&page_size=10';
+        let url = `/statistics/list?page=${page}&page_size=${_statPageSize}`;
         if (project) url += `&project=${encodeURIComponent(project)}`;
         if (module) url += `&module=${encodeURIComponent(module)}`;
+        if (dateStart) url += `&date_start=${encodeURIComponent(dateStart)}`;
+        if (dateEnd) url += `&date_end=${encodeURIComponent(dateEnd)}`;
+        if (status) url += `&status=${encodeURIComponent(status)}`;
+        if (assertion) url += `&assertion=${encodeURIComponent(assertion)}`;
+        if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
 
         const response = await fetch(url);
         const data = await response.json();
 
         const statisticsList = document.getElementById('statisticsList');
+        const paginationEl = document.getElementById('statPagination');
+
+        // 更新分页状态
+        _statCurrentPage = data.page || page;
+        _statTotalPages = data.total_pages || 1;
+        _statTotalRecords = data.total || 0;
 
         if (data.records && data.records.length > 0) {
-            statisticsList.innerHTML = data.records.map(record => `
-                <div class="card mb-3">
+            statisticsList.innerHTML = data.records.map(record => {
+                const statusClass = record.status_code >= 200 && record.status_code < 300 ? 'bg-success' : 'bg-danger';
+                const methodClass = {'GET': 'bg-success', 'POST': 'bg-primary', 'PUT': 'bg-warning', 'DELETE': 'bg-danger'}[record.method] || 'bg-secondary';
+                const assertionIcon = record.assertion_passed ? 'bi-check-circle-fill text-success' : 'bi-x-circle-fill text-danger';
+                const assertionText = record.assertion_passed ? '通过' : '失败';
+
+                return `
+                <div class="card stat-record-card mb-2" onclick="showStatDetail(${record.id})">
                     <div class="card-body">
-                        <h6 class="card-title mb-2">${record.case_name || '未命名'}</h6>
-                        <div class="mb-2">
-                            <small class="text-muted">项目: ${record.project || '-'}</small><br>
-                            <small class="text-muted">模块: ${record.module || '-'}</small>
+                        <div class="d-flex align-items-center mb-1">
+                            <h6 class="stat-record-name mb-0 me-2">${record.case_name || '未命名'}</h6>
+                            <span class="badge ${methodClass} stat-method-badge me-1">${record.method || '-'}</span>
+                            <span class="stat-source-badge stat-source-${(record.source || '调试') === '调试' ? 'debug' : (record.source || '调试') === '执行' ? 'execute' : 'schedule'}">${record.source || '调试'}</span>
                         </div>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span class="badge ${record.status_code >= 200 && record.status_code < 300 ? 'bg-success' : 'bg-danger'}">
-                                ${record.status_code || '-'}
-                            </span>
-                            <small class="text-muted">${record.response_time || 0}ms</small>
+                        <div class="stat-record-meta">
+                            <span class="badge ${statusClass} stat-status-badge">${record.status_code || '-'}</span>
+                            <span class="stat-record-item"><i class="bi bi-speedometer2 me-1"></i>${record.response_time != null ? record.response_time + 'ms' : '-'}</span>
+                            <span class="stat-record-item"><i class="bi ${assertionIcon} me-1"></i>${assertionText}</span>
+                            <span class="stat-record-item"><i class="bi bi-clock me-1"></i>${record.timestamp || '-'}</span>
                         </div>
                     </div>
                 </div>
-            `).join('');
+                `;
+            }).join('');
+
+            // 渲染分页控件
+            renderStatPagination();
         } else {
             statisticsList.innerHTML = `
                 <div class="text-center py-5">
@@ -1321,9 +1365,186 @@ async function loadStatisticsList() {
                     <p class="text-muted mt-3">暂无统计数据</p>
                 </div>
             `;
+            _statTotalPages = 0;
+            renderStatPagination();
         }
     } catch (error) {
         console.error('加载统计列表失败:', error);
+    }
+}
+
+// 渲染统计列表分页控件
+function renderStatPagination() {
+    const paginationEl = document.getElementById('statPagination');
+    const prevBtn = document.getElementById('statPrevBtn');
+    const nextBtn = document.getElementById('statNextBtn');
+    const pageInfo = document.getElementById('statPageInfo');
+
+    if (!paginationEl) return;
+
+    // 更新页码信息
+    pageInfo.textContent = `${_statCurrentPage} / ${_statTotalPages}`;
+
+    if (_statTotalPages <= 1) {
+        paginationEl.style.display = 'none';
+        return;
+    }
+
+    paginationEl.style.display = 'flex';
+
+    // 上一页按钮状态
+    prevBtn.disabled = _statCurrentPage <= 1;
+
+    // 下一页按钮状态
+    nextBtn.disabled = _statCurrentPage >= _statTotalPages;
+}
+
+// 显示统计详情（与网页端一致）
+async function showStatDetail(recordId) {
+    const modalTitle = document.getElementById('commonModalTitle');
+    const modalBody = document.getElementById('commonModalBody');
+    const modalConfirm = document.getElementById('commonModalConfirm');
+
+    modalTitle.textContent = '加载中...';
+    modalBody.innerHTML = `
+        <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">加载中...</span>
+            </div>
+        </div>
+    `;
+    modalConfirm.style.display = 'none';
+
+    safeShowModal(document.getElementById('commonModal'));
+
+    try {
+        const response = await fetch(`/statistics/detail?id=${recordId}`);
+        const data = await response.json();
+
+        if (data.success && data.detail) {
+            const d = data.detail;
+            const statusClass = d.status_code >= 200 && d.status_code < 300 ? 'bg-success' : 'bg-danger';
+            const methodClass = {'GET': 'bg-success', 'POST': 'bg-primary', 'PUT': 'bg-warning', 'DELETE': 'bg-danger'}[d.method] || 'bg-secondary';
+            const assertionIcon = d.assertion_passed ? 'bi-check-circle-fill text-success' : 'bi-x-circle-fill text-danger';
+            const assertionText = d.assertion_passed ? '通过' : '失败';
+
+            // 格式化JSON
+            function formatJson(val) {
+                if (val === null || val === undefined || val === '') return '-';
+                if (typeof val === 'object') {
+                    try { return JSON.stringify(val, null, 2); } catch { return String(val); }
+                }
+                if (typeof val === 'string') {
+                    try { return JSON.stringify(JSON.parse(val), null, 2); } catch { return val; }
+                }
+                return String(val);
+            }
+
+            modalTitle.textContent = d.case_name || '接口详情';
+
+            let assertionHtml = '';
+            const assertionResults = d.assertion_results || [];
+            if (assertionResults.length > 0) {
+                assertionHtml = `
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">断言详情</label>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered mb-0">
+                                <thead class="table-light"><tr><th>类型</th><th>字段</th><th>期望</th><th>实际</th><th>结果</th></tr></thead>
+                                <tbody>
+                                    ${assertionResults.map(a => {
+                                        const passed = a.passed !== false;
+                                        return `<tr>
+                                            <td><small>${a.type || '-'}</small></td>
+                                            <td><small>${a.field || '-'}</small></td>
+                                            <td><small>${a.expected != null ? a.expected : '-'}</small></td>
+                                            <td><small>${a.actual != null ? a.actual : '-'}</small></td>
+                                            <td><span class="badge ${passed ? 'bg-success' : 'bg-danger'}">${passed ? '通过' : '失败'}</span></td>
+                                        </tr>`;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            }
+
+            modalBody.innerHTML = `
+                <div class="stat-detail">
+                    <!-- 基本信息 -->
+                    <div class="mb-3">
+                        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                            <span class="badge ${methodClass}">${d.method || '-'}</span>
+                            <span class="badge ${statusClass}">${d.status_code || '-'}</span>
+                            <span class="stat-detail-item"><i class="bi bi-speedometer2 me-1"></i>${d.response_time != null ? d.response_time + 'ms' : '-'}</span>
+                            <span class="stat-detail-item"><i class="bi ${assertionIcon} me-1"></i>${assertionText}</span>
+                        </div>
+                        <div class="p-2 bg-light rounded mb-1">
+                            <small class="text-muted">URL</small>
+                            <div class="small text-break">${d.url || '-'}</div>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <small class="text-muted"><i class="bi bi-folder2 me-1"></i>${d.project || '-'} / ${d.module || '-'}</small>
+                            <small class="text-muted"><i class="bi bi-clock me-1"></i>${d.timestamp || '-'}</small>
+                        </div>
+                    </div>
+
+                    <!-- 请求头 -->
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">请求头</label>
+                        <pre class="stat-detail-pre">${formatJson(d.request_headers)}</pre>
+                    </div>
+
+                    <!-- 请求体 -->
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">请求体</label>
+                        <pre class="stat-detail-pre">${formatJson(d.request_body)}</pre>
+                    </div>
+
+                    <!-- 断言 -->
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">断言结果</label>
+                        <div><span class="badge ${d.assertion_passed ? 'bg-success' : 'bg-danger'}"><i class="bi ${d.assertion_passed ? 'bi-check-circle-fill' : 'bi-x-circle-fill'} me-1"></i>${assertionText}</span></div>
+                    </div>
+
+                    ${assertionHtml}
+
+                    <!-- 响应头 -->
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">响应头</label>
+                        <pre class="stat-detail-pre">${formatJson(d.response_headers)}</pre>
+                    </div>
+
+                    <!-- 响应体 -->
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">响应体</label>
+                        <pre class="stat-detail-pre">${formatJson(d.response_body)}</pre>
+                    </div>
+
+                    ${d.error ? `
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">错误信息</label>
+                        <div class="alert alert-danger mb-0 small">${d.error}</div>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+        } else {
+            modalBody.innerHTML = `
+                <div class="text-center py-4">
+                    <i class="bi bi-exclamation-circle text-danger" style="font-size: 2rem;"></i>
+                    <p class="text-muted mt-2">获取详情失败</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('获取统计详情失败:', error);
+        modalBody.innerHTML = `
+            <div class="text-center py-4">
+                <i class="bi bi-exclamation-circle text-danger" style="font-size: 2rem;"></i>
+                <p class="text-muted mt-2">获取详情失败: ${error.message}</p>
+            </div>
+        `;
     }
 }
 

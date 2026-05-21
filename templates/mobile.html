@@ -153,42 +153,6 @@
             <div class="container-fluid py-4">
                 <h5 class="mb-3">数据统计</h5>
 
-                <!-- 统计卡片 -->
-                <div class="row g-3 mb-4">
-                    <div class="col-6">
-                        <div class="card stat-card stat-card-primary">
-                            <div class="card-body">
-                                <div class="stat-label">项目总数</div>
-                                <div class="stat-value" id="statProjects">{{ projects_data|length }}</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-6">
-                        <div class="card stat-card stat-card-success">
-                            <div class="card-body">
-                                <div class="stat-label">模块总数</div>
-                                <div class="stat-value" id="statModules">0</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-6">
-                        <div class="card stat-card stat-card-warning">
-                            <div class="card-body">
-                                <div class="stat-label">接口总数</div>
-                                <div class="stat-value" id="statApis">0</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-6">
-                        <div class="card stat-card stat-card-info">
-                            <div class="card-body">
-                                <div class="stat-label">定时任务</div>
-                                <div class="stat-value" id="statSchedulers">0</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- 筛选器 -->
                 <div class="card mb-3">
                     <div class="card-body">
@@ -203,6 +167,39 @@
                                     <option value="">所有模块</option>
                                 </select>
                             </div>
+                            <div class="col-6">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">开始</span>
+                                    <input type="date" class="form-control form-control-sm" id="filterDateStart" onchange="loadStatistics()">
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">结束</span>
+                                    <input type="date" class="form-control form-control-sm" id="filterDateEnd" onchange="loadStatistics()">
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <select class="form-select form-select-sm" id="filterStatus" onchange="loadStatistics()">
+                                    <option value="">所有状态码</option>
+                                    <option value="2xx">2xx 成功</option>
+                                    <option value="4xx">4xx 客户端错误</option>
+                                    <option value="5xx">5xx 服务端错误</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <select class="form-select form-select-sm" id="filterAssertion" onchange="loadStatistics()">
+                                    <option value="">所有断言</option>
+                                    <option value="passed">断言通过</option>
+                                    <option value="failed">断言失败</option>
+                                </select>
+                            </div>
+                            <div class="col-12">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                    <input type="text" class="form-control form-control-sm" id="filterUrl" placeholder="搜索URL..." oninput="debounceFilterUrl()">
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -213,6 +210,17 @@
                         <i class="bi bi-bar-chart-line text-muted" style="font-size: 3rem;"></i>
                         <p class="text-muted mt-3">暂无统计数据</p>
                     </div>
+                </div>
+
+                <!-- 分页控件 -->
+                <div id="statPagination" class="d-flex justify-content-between align-items-center mt-3" style="display:none;">
+                    <button class="btn btn-sm btn-outline-secondary" id="statPrevBtn" onclick="loadStatisticsList(_statCurrentPage - 1)">
+                        <i class="bi bi-chevron-left"></i> 上一页
+                    </button>
+                    <span class="small text-muted" id="statPageInfo">1 / 1</span>
+                    <button class="btn btn-sm btn-outline-secondary" id="statNextBtn" onclick="loadStatisticsList(_statCurrentPage + 1)">
+                        下一页 <i class="bi bi-chevron-right"></i>
+                    </button>
                 </div>
             </div>
         </div>
