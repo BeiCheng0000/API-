@@ -17,6 +17,36 @@ from common.db_handler import MySQLHandler
 from common.logger_handler import logger
 
 
+def _safe_json_value(value, ensure_ascii=False):
+    """
+    安全地将值序列化为 JSON 字符串。
+
+    对于字典/列表：直接 json.dumps
+    对于字符串：尝试解析为 JSON，成功则原样序列化；失败则包装为 {"_raw": 原始文本}
+    对于 None/空值：返回 '{}'
+
+    Args:
+        value: 要序列化的值
+        ensure_ascii: 是否转义非 ASCII 字符
+
+    Returns:
+        str: 合法的 JSON 字符串
+    """
+    if value is None or value == '':
+        return '{}'
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=ensure_ascii)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(parsed, ensure_ascii=ensure_ascii)
+            return json.dumps({'_raw': value}, ensure_ascii=ensure_ascii)
+        except (json.JSONDecodeError, ValueError):
+            return json.dumps({'_raw': value}, ensure_ascii=ensure_ascii)
+    return json.dumps({'_raw': str(value)}, ensure_ascii=ensure_ascii)
+
+
 class DatabaseInitializer:
     """数据库初始化类"""
 
@@ -157,7 +187,7 @@ class DatabaseInitializer:
             `url` TEXT NOT NULL COMMENT 'API URL',
             `method` VARCHAR(10) NOT NULL COMMENT 'HTTP方法',
             `headers` JSON COMMENT '请求头',
-            `data` JSON COMMENT '请求数据',
+            `data` TEXT COMMENT '请求数据',
             `expected` JSON COMMENT '期望结果',
             `extractions` JSON COMMENT '数据提取规则',
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -242,9 +272,9 @@ class DatabaseInitializer:
             `module` VARCHAR(255) COMMENT '模块名称',
             `case_name` VARCHAR(255) COMMENT '用例名称',
             `request_headers` JSON COMMENT '请求头',
-            `request_body` JSON COMMENT '请求体',
+            `request_body` TEXT COMMENT '请求体',
             `response_headers` JSON COMMENT '响应头',
-            `response_body` JSON COMMENT '响应体',
+            `response_body` TEXT COMMENT '响应体',
             `timestamp` VARCHAR(30) COMMENT '记录时间戳(前端展示用)',
             `error` TEXT COMMENT '错误信息',
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -351,7 +381,7 @@ class DatabaseInitializer:
                             api_info.get('url', ''),
                             api_info.get('method', ''),
                             json.dumps(api_info.get('headers', {}), ensure_ascii=False),
-                            json.dumps(api_info.get('data', {}), ensure_ascii=False),
+                            _safe_json_value(api_info.get('data', {}), ensure_ascii=False),
                             json.dumps(api_info.get('expected', {}), ensure_ascii=False),
                             json.dumps(api_info.get('extractions', {}), ensure_ascii=False)
                         )
@@ -459,9 +489,9 @@ class DatabaseInitializer:
                     stat.get('module', ''),
                     stat.get('case_name', ''),
                     json.dumps(stat.get('request_headers', {}), ensure_ascii=False),
-                    json.dumps(stat.get('request_body'), ensure_ascii=False),
+                    _safe_json_value(stat.get('request_body'), ensure_ascii=False),
                     json.dumps(stat.get('response_headers', {}), ensure_ascii=False),
-                    json.dumps(stat.get('response_body'), ensure_ascii=False),
+                    _safe_json_value(stat.get('response_body'), ensure_ascii=False),
                     stat.get('timestamp', '') or '',
                     stat.get('error', '') or ''
                 )

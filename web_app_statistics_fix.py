@@ -37,9 +37,9 @@ def save_statistics_data(data, db_handler, STATISTICS_FILE, logger, json, os):
                         record.get('module', ''),
                         record.get('case_name', ''),
                         json.dumps(record.get('request_headers', {}), ensure_ascii=False),
-                        json.dumps(record.get('request_body'), ensure_ascii=False),
+                        _safe_json_value(record.get('request_body'), ensure_ascii=False),
                         json.dumps(record.get('response_headers', {}), ensure_ascii=False),
-                        json.dumps(record.get('response_body'), ensure_ascii=False)
+                        _safe_json_value(record.get('response_body'), ensure_ascii=False)
                     )
                 )
 

@@ -517,6 +517,58 @@ def get_statistics_data() -> List[Dict[str, Any]]:
         return []
 
 
+def _unwrap_raw(data: Any) -> Any:
+    """
+    解包 _safe_json_value 包装的 _raw 数据。
+
+    如果数据是字典且仅包含 '_raw' 键，则返回原始纯文本值。
+    否则返回原数据。
+
+    Args:
+        data: 解析后的 JSON 数据
+
+    Returns:
+        解包后的数据
+    """
+    if isinstance(data, dict) and len(data) == 1 and '_raw' in data:
+        return data['_raw']
+    return data
+
+
+def _safe_json_value(value: Any, ensure_ascii: bool = False) -> str:
+    """
+    安全地将值序列化为 JSON 字符串。
+
+    对于字典/列表：直接 json.dumps
+    对于字符串：尝试解析为 JSON，成功则原样序列化；失败则包装为 {"_raw": 原始文本}
+    对于 None/空值：返回 '{}'
+
+    Args:
+        value: 要序列化的值
+        ensure_ascii: 是否转义非 ASCII 字符
+
+    Returns:
+        str: 合法的 JSON 字符串
+    """
+    if value is None or value == '':
+        return '{}'
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=ensure_ascii)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            # 解析成功，确保顶层是对象或数组
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(parsed, ensure_ascii=ensure_ascii)
+            # 顶层是字符串/数字/布尔值，包装为对象
+            return json.dumps({'_raw': value}, ensure_ascii=ensure_ascii)
+        except (json.JSONDecodeError, ValueError):
+            # 纯文本，包装为对象保留原始内容
+            return json.dumps({'_raw': value}, ensure_ascii=ensure_ascii)
+    # 其他类型（数字、布尔等），包装为对象
+    return json.dumps({'_raw': str(value)}, ensure_ascii=ensure_ascii)
+
+
 def _insert_statistic_record_to_db(record: Dict[str, Any]) -> bool:
     """
     将单条统计记录插入数据库（内部辅助函数）
@@ -566,9 +618,9 @@ def _insert_statistic_record_to_db(record: Dict[str, Any]) -> bool:
             record.get('module', '') or '默认模块',
             record.get('case_name', '') or '默认用例',
             json.dumps(record.get('request_headers', {}) or {}, ensure_ascii=False),
-            json.dumps(record.get('request_body') or {}, ensure_ascii=False),
+            _safe_json_value(record.get('request_body'), ensure_ascii=False),
             json.dumps(record.get('response_headers', {}) or {}, ensure_ascii=False),
-            json.dumps(record.get('response_body') or {}, ensure_ascii=False),
+            _safe_json_value(record.get('response_body'), ensure_ascii=False),
             record.get('timestamp', '') or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             record.get('error', '') or ''
         )
@@ -1347,7 +1399,7 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
                             'url': api_data.get('url', ''),
                             'method': api_data.get('method', 'GET'),
                             'headers': json.loads(api_data.get('headers', '{}')),
-                            'data': json.loads(api_data.get('data', '{}')),
+                            'data': _unwrap_raw(json.loads(api_data.get('data', '{}'))),
                             'expected': json.loads(api_data.get('expected', '{}')),
                             'extractions': json.loads(api_data.get('extractions', '{}')),
                             'project': project_name,
@@ -1592,7 +1644,7 @@ def projects_list():
                         'url': api['url'],
                         'method': api['method'],
                         'headers': json.loads(api['headers']) if api['headers'] else {},
-                        'data': json.loads(api['data']) if api['data'] else {},
+                        'data': _unwrap_raw(json.loads(api['data'])) if api['data'] else {},
                         'expected': json.loads(api['expected']) if api['expected'] else {},
                         'extractions': json.loads(api['extractions']) if api['extractions'] else {}
                     })
@@ -1825,7 +1877,8 @@ def api_add(project_name, module_name):
         try:
             data_dict = json.loads(data) if data else {}
         except json.JSONDecodeError:
-            data_dict = {}
+            # 纯文本数据，包装为对象保留原始内容
+            data_dict = {'_raw': data} if data else {}
 
         try:
             expected_dict = json.loads(expected) if expected else {}
@@ -1840,7 +1893,7 @@ def api_add(project_name, module_name):
         # 添加接口
         db_handler.execute(
             "INSERT INTO apis (module_id, case_name, url, method, headers, data, expected, extractions) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (mod_id, case_name, url, method, json.dumps(headers_dict), json.dumps(data_dict), json.dumps(expected_dict), json.dumps(extractions_dict))
+            (mod_id, case_name, url, method, json.dumps(headers_dict, ensure_ascii=False), json.dumps(data_dict, ensure_ascii=False), json.dumps(expected_dict, ensure_ascii=False), json.dumps(extractions_dict, ensure_ascii=False))
         )
         logger.info("接口添加成功")
 
@@ -1908,7 +1961,8 @@ def api_update(project_name, module_name, api_id):
         try:
             data_dict = json.loads(data) if data else {}
         except json.JSONDecodeError:
-            data_dict = {}
+            # 纯文本数据，包装为对象保留原始内容
+            data_dict = {'_raw': data} if data else {}
 
         try:
             expected_dict = json.loads(expected) if expected else {}
@@ -1923,7 +1977,7 @@ def api_update(project_name, module_name, api_id):
         # 更新接口
         db_handler.execute(
             "UPDATE apis SET case_name = %s, url = %s, method = %s, headers = %s, data = %s, expected = %s, extractions = %s WHERE id = %s",
-            (case_name, url, method, json.dumps(headers_dict), json.dumps(data_dict), json.dumps(expected_dict), json.dumps(extractions_dict), api_id)
+            (case_name, url, method, json.dumps(headers_dict, ensure_ascii=False), json.dumps(data_dict, ensure_ascii=False), json.dumps(expected_dict, ensure_ascii=False), json.dumps(extractions_dict, ensure_ascii=False), api_id)
         )
         logger.info("接口更新成功")
 
@@ -2023,7 +2077,7 @@ def apis_get(project_name, module_name, api_id):
             'url': api_data.get('url'),
             'method': api_data.get('method'),
             'headers': json.loads(api_data.get('headers', '{}')),
-            'data': json.loads(api_data.get('data', '{}')),
+            'data': _unwrap_raw(json.loads(api_data.get('data', '{}'))),
             'expected': json.loads(api_data.get('expected', '{}')),
             'extractions': json.loads(api_data.get('extractions', '{}')),
             'project_name': project_name,
@@ -2094,8 +2148,8 @@ def api_add_legacy():
         try:
             data_dict = json.loads(data) if data else {}
         except Exception:
-            # 如果不是有效JSON，将原始文本作为字符串值保存
-            data_dict = data if data else {}
+            # 如果不是有效JSON，包装为对象保留原始内容
+            data_dict = {'_raw': data} if data else {}
         expected_dict = json.loads(expected) if expected else {}
 
         # 获取测试数据
@@ -2185,7 +2239,11 @@ def api_edit(api_name, case_index):
         try:
             # 解析JSON数据
             headers_dict = json.loads(headers) if headers else {}
-            data_dict = json.loads(data) if data else {}
+            try:
+                data_dict = json.loads(data) if data else {}
+            except json.JSONDecodeError:
+                # 如果不是有效JSON，包装为对象保留原始内容
+                data_dict = {'_raw': data} if data else {}
             expected_dict = json.loads(expected) if expected else {}
 
             # 更新测试用例
@@ -3086,7 +3144,7 @@ def test_execute_module(project_name, module_name):
                                 'url': api.get('url', ''),
                                 'method': api.get('method', 'GET'),
                                 'headers': json.loads(api.get('headers', '{}')),
-                                'data': json.loads(api.get('data', '{}')),
+                                'data': _unwrap_raw(json.loads(api.get('data', '{}'))),
                                 'expected': json.loads(api.get('expected', '{}')),
                                 'extractions': json.loads(api.get('extractions', '{}')),
                                 'project': project_name,
@@ -3184,7 +3242,7 @@ def test_execute(project_name, module_name, api_id):
             'url': api_data.get('url', ''),
             'method': api_data.get('method', 'GET'),
             'headers': json.loads(api_data.get('headers', '{}')),
-            'data': json.loads(api_data.get('data', '{}')),
+            'data': _unwrap_raw(json.loads(api_data.get('data', '{}'))),
             'expected': json.loads(api_data.get('expected', '{}')),
             'extractions': json.loads(api_data.get('extractions', '{}')),
             'project': project_name,
