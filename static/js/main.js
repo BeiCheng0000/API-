@@ -559,11 +559,42 @@ function deleteProjectVar(projectName, varKey) {
 }
 
 /**
+ * 请求缓存
+ */
+const requestCache = new Map();
+
+/**
+ * 带缓存的fetch请求
+ * @param {string} url - 请求URL
+ * @param {Object} options - 请求选项
+ * @param {number} cacheTime - 缓存时间（毫秒）
+ * @returns {Promise} - Promise对象
+ */
+function fetchWithCache(url, options = {}, cacheTime = 30000) {
+    const cacheKey = url + JSON.stringify(options);
+    const cached = requestCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.timestamp < cacheTime) {
+        return Promise.resolve(cached.data);
+    }
+
+    return fetch(url, options)
+        .then(response => response.json())
+        .then(data => {
+            // 存入缓存
+            requestCache.set(cacheKey, {
+                data,
+                timestamp: Date.now()
+            });
+            return data;
+        });
+}
+
+/**
  * 加载顶部统计数据（项目数、模块数、接口数、定时任务数）
  */
 function loadTopStats() {
-    fetch('/api/top_stats')
-        .then(response => response.json())
+    fetchWithCache('/api/top_stats', {}, 30000)  // 缓存30秒
         .then(data => {
             const statProjects = document.getElementById('statProjects');
             const statModules = document.getElementById('statModules');

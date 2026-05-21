@@ -88,6 +88,7 @@ __test__ = False
 import os
 import json
 import time
+import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -100,6 +101,7 @@ load_dotenv()
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, send_file
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from flask_compress import Compress
 
 from api.base_api import BaseAPI
 from common.yaml_handler import YamlHandler
@@ -107,9 +109,80 @@ from common.logger_handler import logger
 from common.config_handler import env_config
 from common.db_handler import MySQLHandler
 
+# 缓存相关
+from functools import wraps
+import threading
+
+# 简单的内存缓存实现
+class SimpleCache:
+    def __init__(self, default_timeout=300):  # 默认缓存5分钟
+        self.cache = {}
+        self.default_timeout = default_timeout
+        self.lock = threading.Lock()
+
+    def get(self, key):
+        with self.lock:
+            item = self.cache.get(key)
+            if item is None:
+                return None
+            if time.time() > item['expires']:
+                del self.cache[key]
+                return None
+            return item['value']
+
+    def set(self, key, value, timeout=None):
+        if timeout is None:
+            timeout = self.default_timeout
+        with self.lock:
+            self.cache[key] = {
+                'value': value,
+                'expires': time.time() + timeout
+            }
+
+    def clear(self):
+        with self.lock:
+            self.cache.clear()
+
+# 创建缓存实例
+projects_cache = SimpleCache(default_timeout=60)  # 项目数据缓存1分钟
+stats_cache = SimpleCache(default_timeout=30)  # 统计数据缓存30秒
+scheduler_cache = SimpleCache(default_timeout=15)  # 定时任务缓存15秒
+
+# 缓存装饰器
+def cache_result(cache_key, cache_instance, timeout=None):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # 生成缓存键
+            key_parts = [cache_key]
+            if args:
+                key_parts.extend(str(arg) for arg in args)
+            if kwargs:
+                key_parts.extend(f"{k}={v}" for k, v in sorted(kwargs.items()))
+            cache_key_full = hashlib.md5("|".join(key_parts).encode()).hexdigest()
+
+            # 尝试从缓存获取
+            result = cache_instance.get(cache_key_full)
+            if result is not None:
+                logger.debug(f"缓存命中: {cache_key_full}")
+                return result
+
+            # 缓存未命中，执行函数
+            logger.debug(f"缓存未命中: {cache_key_full}")
+            result = func(*args, **kwargs)
+
+            # 存入缓存
+            cache_instance.set(cache_key_full, result, timeout)
+            return result
+        return wrapper
+    return decorator
+
 # 创建Flask应用
 app = Flask(__name__)
 app.secret_key = 'api_automation_platform_secret_key_2024'  # ⚠️ 生产环境请修改为随机字符串，建议通过环境变量 FLASK_SECRET_KEY 设置
+
+# 启用GZIP压缩
+Compress(app)
 
 # 全局HTTP Session，复用TCP连接，避免每次请求都重新建立连接（DNS解析+TCP握手+TLS握手约300ms）
 import requests as _requests
@@ -815,6 +888,7 @@ def save_test_data(data: Dict[str, Any]) -> bool:
 def get_projects() -> Dict[str, Any]:
     """
     获取项目数据（从数据库读取，兼容旧格式）
+    优化：使用JOIN查询减少数据库查询次数
 
     Returns:
         项目数据字典，格式为 {project_name: {description, modules, envs, current_env, variables}}
@@ -826,65 +900,90 @@ def get_projects() -> Dict[str, Any]:
         db_handler._ensure_connection()
 
         result = {}
-        projects = db_handler.query("SELECT id, name, description, current_env FROM projects")
 
-        for proj in projects:
-            proj_name = proj['name']
-            proj_id = proj['id']
-            proj_desc = proj.get('description', '') or ''
+        # 1. 使用JOIN查询一次性获取所有项目、模块和API数据
+        query = """
+        SELECT 
+            p.id as project_id, p.name as project_name, p.description as project_desc, p.current_env as project_current_env,
+            m.id as module_id, m.name as module_name, m.description as module_desc,
+            a.id as api_id, a.case_name, a.url, a.method, a.headers, a.data, a.expected, a.extractions
+        FROM projects p
+        LEFT JOIN modules m ON p.id = m.project_id
+        LEFT JOIN apis a ON m.id = a.module_id
+        ORDER BY p.id, m.id, a.id
+        """
 
-            # 获取模块
-            modules_dict = {}
-            modules = db_handler.query("SELECT id, name, description FROM modules WHERE project_id = %s ORDER BY id", (proj_id,))
-            for mod in modules:
-                mod_id = mod['id']
-                mod_name = mod['name']
-                mod_desc = mod.get('description', '') or ''
+        all_data = db_handler.query(query)
 
-                # 获取模块下的API列表
-                apis_list = []
-                apis = db_handler.query("SELECT * FROM apis WHERE module_id = %s ORDER BY id", (mod_id,))
-                for api in apis:
-                    api_item = {
-                        'case_name': api.get('case_name', ''),
-                        'url': api.get('url', ''),
-                        'method': api.get('method', 'GET'),
-                        'headers': api.get('headers') if isinstance(api.get('headers'), dict) else {},
-                        'data': api.get('data') if isinstance(api.get('data'), (dict, str)) else {},
-                        'expected': api.get('expected') if isinstance(api.get('expected'), dict) else {},
-                        'extractions': api.get('extractions') if isinstance(api.get('extractions'), dict) else {},
-                    }
-                    apis_list.append(api_item)
+        # 按项目组织数据
+        projects_dict = {}
+        for row in all_data:
+            project_id = row['project_id']
+            project_name = row['project_name']
 
-                modules_dict[mod_name] = {
-                    'description': mod_desc,
-                    'apis': apis_list
+            if project_id not in projects_dict:
+                projects_dict[project_id] = {
+                    'name': project_name,
+                    'description': row['project_desc'] or '',
+                    'current_env': row['project_current_env'] or '',
+                    'modules': {},
+                    'envs': {},
+                    'variables': {}
                 }
 
-            # 获取环境配置
-            envs_dict = {}
-            envs = db_handler.query("SELECT name, base_url FROM environments WHERE project_id = %s ORDER BY id", (proj_id,))
-            for env in envs:
-                envs_dict[env['name']] = {'base_url': env.get('base_url', '')}
+            # 处理模块数据
+            module_id = row['module_id']
+            if module_id and module_id not in projects_dict[project_id]['modules']:
+                projects_dict[project_id]['modules'][row['module_name']] = {
+                    'description': row['module_desc'] or '',
+                    'apis': []
+                }
 
-            # 获取变量
-            variables_dict = {}
-            variables = db_handler.query("SELECT name, value FROM variables WHERE project_id = %s ORDER BY id", (proj_id,))
-            for var in variables:
-                variables_dict[var['name']] = var.get('value', '') or ''
+            # 处理API数据
+            api_id = row['api_id']
+            if api_id:
+                api_item = {
+                    'case_name': row['case_name'] or '',
+                    'url': row['url'] or '',
+                    'method': row['method'] or 'GET',
+                    'headers': row['headers'] if isinstance(row['headers'], dict) else {},
+                    'data': row['data'] if isinstance(row['data'], (dict, str)) else {},
+                    'expected': row['expected'] if isinstance(row['expected'], dict) else {},
+                    'extractions': row['extractions'] if isinstance(row['extractions'], dict) else {},
+                }
+                projects_dict[project_id]['modules'][row['module_name']]['apis'].append(api_item)
 
-            # 获取当前环境 - 从projects表读取current_env字段
-            current_env = proj.get('current_env', '') or ''
-            if not current_env and envs_dict:
-                # 如果没有设置当前环境，默认取第一个环境
-                current_env = list(envs_dict.keys())[0]
+        # 2. 获取环境配置
+        envs_query = "SELECT project_id, name, base_url FROM environments ORDER BY project_id, id"
+        envs_data = db_handler.query(envs_query)
 
-            result[proj_name] = {
-                'description': proj_desc,
-                'modules': modules_dict,
-                'envs': envs_dict,
-                'current_env': current_env,
-                'variables': variables_dict
+        for row in envs_data:
+            project_id = row['project_id']
+            if project_id in projects_dict:
+                if 'envs' not in projects_dict[project_id]:
+                    projects_dict[project_id]['envs'] = {}
+                projects_dict[project_id]['envs'][row['name']] = {'base_url': row.get('base_url', '') or ''}
+
+        # 3. 获取变量
+        vars_query = "SELECT project_id, name, value FROM variables ORDER BY project_id, id"
+        vars_data = db_handler.query(vars_query)
+
+        for row in vars_data:
+            project_id = row['project_id']
+            if project_id in projects_dict:
+                if 'variables' not in projects_dict[project_id]:
+                    projects_dict[project_id]['variables'] = {}
+                projects_dict[project_id]['variables'][row['name']] = row.get('value', '') or ''
+
+        # 4. 转换为最终格式
+        for project_id, project_data in projects_dict.items():
+            project_name = project_data['name']
+            result[project_name] = {
+                'description': project_data['description'],
+                'modules': project_data['modules'],
+                'envs': project_data['envs'],
+                'current_env': project_data['current_env'],
+                'variables': project_data['variables']
             }
 
         return result
@@ -1427,8 +1526,10 @@ def index():
 
 # 路由：顶部统计数据
 @app.route('/api/top_stats')
+@cache_result('top_stats', stats_cache, timeout=15)  # 缓存15秒
 def api_top_stats():
     """获取顶部统计数据（项目数、模块数、接口数、定时任务数）"""
+
     projects_data = get_projects()
     
     # 项目总数
@@ -2239,11 +2340,7 @@ def api_edit(api_name, case_index):
         try:
             # 解析JSON数据
             headers_dict = json.loads(headers) if headers else {}
-            try:
-                data_dict = json.loads(data) if data else {}
-            except json.JSONDecodeError:
-                # 如果不是有效JSON，包装为对象保留原始内容
-                data_dict = {'_raw': data} if data else {}
+            data_dict = json.loads(data) if data else {}
             expected_dict = json.loads(expected) if expected else {}
 
             # 更新测试用例
@@ -2283,7 +2380,9 @@ def api_debug():
 
 # 路由：定时任务列表
 @app.route('/scheduler/list')
+@cache_result('scheduler_list', scheduler_cache, timeout=15)  # 缓存15秒
 def scheduler_list():
+
     """定时任务列表"""
     jobs = []
     for job in scheduler.get_jobs():
@@ -2442,8 +2541,10 @@ def scheduler_delete(job_id):
 
 # 路由：获取统计页面的项目列表
 @app.route('/statistics/projects')
+@cache_result('statistics_projects', stats_cache, timeout=30)  # 缓存30秒
 def statistics_projects():
     """获取统计数据中所有项目列表（SQL直接查询）"""
+
     try:
         if not db_handler:
             return jsonify({'success': True, 'projects': []})
@@ -2458,8 +2559,10 @@ def statistics_projects():
 
 # 路由：获取统计页面的模块列表
 @app.route('/statistics/modules')
+@cache_result('statistics_modules', stats_cache, timeout=30)  # 缓存30秒
 def statistics_modules():
     """获取指定项目的模块列表（SQL直接查询）"""
+
     project = request.args.get('project', '')
     try:
         if not db_handler:
