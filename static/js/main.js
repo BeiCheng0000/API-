@@ -816,26 +816,7 @@ function debugApi(projectName, moduleName, caseIndex) {
     });
 }
 
-/**
- * 执行测试
- * @param {string} apiName - API名称
- * @param {number} caseIndex - 用例索引
- */
-function executeTest(apiName, caseIndex) {
-    fetch(`/test/execute/${apiName}/${caseIndex}`)
-        .then(response => response.json())
-        .then(result => {
-            if (result.success) {
-                showToast('成功', '测试执行成功', 'success');
-            } else {
-                console.error('测试执行失败详情:', result.error);
-                showToast('失败', '测试执行失败: ' + (result.error || '未知错误'), 'danger');
-            }
-        })
-        .catch(error => {
-            showToast('错误', '请求失败: ' + error.message, 'danger');
-        });
-}
+// executeTest 函数已移至 projects.js，使用三参数版本（projectName, moduleName, apiId）
 
 /**
  * 删除API
@@ -1300,44 +1281,8 @@ function setAssertions(assertions, containerId = 'assertionContainer') {
     }
 }
 
-/**
- * 编辑API
- * @param {string} apiName - API名称
- * @param {number} caseIndex - 用例索引
- */
-function editApi(apiName, caseIndex) {
-    // 从服务器获取API数据
-    fetch(`/api/edit/${apiName}/${caseIndex}`)
-        .then(response => response.json())
-        .then(apiData => {
-            if (apiData.error) {
-                showToast('错误', apiData.error, 'danger');
-                return;
-            }
-            
-            // 填充编辑表单
-            document.getElementById('editApiName').value = apiData.api_name;
-            document.getElementById('editCaseIndex').value = apiData.case_index;
-            document.getElementById('editCaseName').value = apiData.case_name;
-            document.getElementById('editUrl').value = apiData.url;
-            document.getElementById('editMethod').value = apiData.method;
+// editApi 函数已移至 projects.js，使用三参数版本（projectName, moduleName, apiId）
 
-            // 使用统一接口设置请求头和请求体
-            setHeadersData('edit', apiData.headers || {});
-            setBodyData('edit', apiData.data || {});
-            switchBodyMode('edit', 'table');
-            
-            // 设置断言
-            setEditAssertions(apiData.expected || {}, 'editAssertionContainer');
-            
-            // 显示编辑模态框
-            const editModal = new bootstrap.Modal(document.getElementById('editApiModal'));
-            editModal.show();
-        })
-        .catch(error => {
-            showToast('错误', '获取API数据失败: ' + error.message, 'danger');
-        });
-}
 
 /**
  * 保存编辑的API

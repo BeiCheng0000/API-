@@ -1515,13 +1515,34 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
         logger.error(f"定时测试失败: 未找到接口数据 - {project_name}/{module_name}[{api_id}]")
 
 
+# 设备检测函数
+def is_mobile_device(user_agent):
+    """检测是否为移动设备"""
+    if not user_agent:
+        return False
+    mobile_keywords = ['Mobile', 'Android', 'iPhone', 'iPad', 'Windows Phone', 'webOS', 'BlackBerry']
+    return any(keyword in user_agent for keyword in mobile_keywords)
+
 # 路由：首页
 @app.route('/')
 def index():
-    """首页"""
+    """首页 - 根据设备类型返回不同页面"""
+    user_agent = request.headers.get('User-Agent', '')
     test_data = get_test_data()
     projects_data = get_projects()
-    return render_template('index.html', test_data=test_data, projects_data=projects_data)
+
+    # 检测是否为移动设备
+    if is_mobile_device(user_agent):
+        return render_template('mobile.html', projects_data=projects_data)
+    else:
+        return render_template('index.html', test_data=test_data, projects_data=projects_data)
+
+# 路由：手机端页面
+@app.route('/mobile')
+def mobile():
+    """手机端页面"""
+    projects_data = get_projects()
+    return render_template('mobile.html', projects_data=projects_data)
 
 
 # 路由：顶部统计数据
@@ -2133,6 +2154,54 @@ def apis_delete(project_name, module_name, api_id):
 
 
 # 路由：获取单个接口数据
+@app.route('/projects/<project_name>/modules/<module_name>/apis')
+def apis_list(project_name, module_name):
+    """获取模块下的接口列表"""
+    logger.info(f"========== 开始获取接口列表 ==========")
+    logger.info(f"项目名称: {project_name}, 模块名称: {module_name}")
+
+    if not db_handler:
+        logger.error("数据库未连接")
+        return jsonify({'success': False, 'error': '数据库未连接'})
+
+    try:
+        db_handler._ensure_connection()
+        logger.info("数据库连接正常")
+
+        # 查询项目ID
+        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+        if not proj:
+            logger.warning(f"项目不存在: {project_name}")
+            return jsonify({'success': False, 'error': '项目不存在'})
+        proj_id = proj[0]['id']
+
+        # 查询模块ID
+        mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+        if not mod:
+            logger.warning(f"模块不存在: {module_name}")
+            return jsonify({'success': False, 'error': '模块不存在'})
+        mod_id = mod[0]['id']
+
+        # 查询接口列表
+        apis = db_handler.query("SELECT * FROM apis WHERE module_id = %s ORDER BY id", (mod_id,))
+        logger.info(f"获取到 {len(apis)} 个接口")
+
+        # 返回接口列表
+        api_list = []
+        for api in apis:
+            api_list.append({
+                'id': api.get('id'),
+                'case_name': api.get('case_name'),
+                'url': api.get('url'),
+                'method': api.get('method')
+            })
+
+        return jsonify({'success': True, 'apis': api_list})
+    except Exception as e:
+        logger.error(f"获取接口列表失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'获取接口列表失败: {str(e)}'})
+
+
 @app.route('/projects/<project_name>/modules/<module_name>/apis/get/<int:api_id>')
 def apis_get(project_name, module_name, api_id):
     """获取单个接口数据"""
