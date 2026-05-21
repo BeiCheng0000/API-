@@ -376,6 +376,48 @@ def _update_scheduler_jobs_module_name(project_name: str, old_name: str, new_nam
         logger.error(f"更新定时任务模块名称失败: {e}", exc_info=True)
 
 
+def _update_scheduler_jobs_case_name(project_name: str, module_name: str, api_id: int, old_case_name: str, new_case_name: str) -> None:
+    """
+    接口重命名时，同步更新相关定时任务的 case_name
+
+    Args:
+        project_name: 项目名称
+        module_name: 模块名称
+        api_id: 接口ID
+        old_case_name: 旧接口名称
+        new_case_name: 新接口名称
+    """
+    try:
+        # 先收集需要更新的任务信息，避免遍历时修改
+        jobs_to_update = []
+        for job in scheduler.get_jobs():
+            if (job.func == scheduled_test_job and len(job.args) > 2
+                    and job.args[0] == project_name and job.args[1] == module_name
+                    and job.args[2] == api_id):
+                jobs_to_update.append({
+                    'id': job.id,
+                    'args': list(job.args),
+                    'name': job.name,
+                    'cron_expr': _extract_cron_expression(job.trigger)
+                })
+        # 统一更新
+        for job_info in jobs_to_update:
+            new_job_name = job_info['name'].replace(f" - {old_case_name}", f" - {new_case_name}", 1)
+            scheduler.remove_job(job_info['id'])
+            scheduler.add_job(
+                func=scheduled_test_job,
+                trigger=CronTrigger.from_crontab(job_info['cron_expr']),
+                id=job_info['id'],
+                args=job_info['args'],
+                name=new_job_name
+            )
+        if jobs_to_update:
+            _save_scheduler_jobs()
+            logger.info(f"接口重命名({project_name}/{module_name} - {old_case_name} -> {new_case_name})，已同步更新 {len(jobs_to_update)} 个定时任务")
+    except Exception as e:
+        logger.error(f"更新定时任务接口名称失败: {e}", exc_info=True)
+
+
 def _delete_scheduler_jobs_by_project(project_name: str) -> None:
     """
     删除项目时，清理关联的所有定时任务
@@ -2096,12 +2138,19 @@ def api_update(project_name, module_name, api_id):
         except json.JSONDecodeError:
             extractions_dict = {}
 
+        # 记录旧的接口名称，用于同步更新定时任务
+        old_case_name = api[0].get('case_name', '')
+
         # 更新接口
         db_handler.execute(
             "UPDATE apis SET case_name = %s, url = %s, method = %s, headers = %s, data = %s, expected = %s, extractions = %s WHERE id = %s",
             (case_name, url, method, json.dumps(headers_dict, ensure_ascii=False), json.dumps(data_dict, ensure_ascii=False), json.dumps(expected_dict, ensure_ascii=False), json.dumps(extractions_dict, ensure_ascii=False), api_id)
         )
         logger.info("接口更新成功")
+
+        # 如果接口名称发生变化，同步更新关联的定时任务名称
+        if old_case_name != case_name:
+            _update_scheduler_jobs_case_name(project_name, module_name, api_id, old_case_name, case_name)
 
         return jsonify({'success': True, 'message': '接口更新成功'})
     except Exception as e:
