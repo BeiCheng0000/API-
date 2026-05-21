@@ -1,0 +1,387 @@
+
+/* 手机端专用样式 */
+
+/* 全局样式 */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #f5f5f5;
+    padding-top: 56px; /* 为固定导航栏留出空间 */
+    padding-bottom: 60px; /* 为底部导航栏留出空间 */
+}
+
+/* 主内容区 */
+.main-content {
+    min-height: calc(100vh - 116px);
+}
+
+/* 顶部导航栏 */
+.navbar {
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.navbar-brand {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+/* 页面内容 */
+.page-content {
+    display: none;
+}
+
+.page-content.active {
+    display: block;
+}
+
+/* 项目卡片 */
+.project-card {
+    border: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    transition: all 0.3s ease;
+    border-radius: 0.75rem;
+    overflow: hidden;
+}
+
+.project-card .card-body {
+    padding: 1.25rem;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.project-card .card-body:active {
+    background-color: #f8f9fa;
+}
+
+.project-modules {
+    background-color: #f8f9fa;
+    border-top: 1px solid #e9ecef;
+}
+
+.project-modules .card-body {
+    padding: 1rem 1.25rem;
+}
+
+.project-toggle-icon {
+    transition: transform 0.3s ease;
+    font-size: 1.25rem;
+    color: #6c757d;
+}
+
+/* 项目操作按钮 */
+.project-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.project-actions .btn {
+    flex: 1;
+    min-width: 80px;
+}
+
+/* 模块列表 */
+.module-list {
+    margin-top: 0.75rem;
+}
+
+.module-item {
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    background-color: white;
+    margin-bottom: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid #e9ecef;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.module-item:active {
+    background-color: #e9ecef;
+    transform: scale(0.98);
+}
+
+/* 统计卡片 */
+.stat-card {
+    border: none;
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.stat-card .card-body {
+    padding: 1rem;
+    text-align: center;
+}
+
+.stat-label {
+    font-size: 0.875rem;
+    color: #6c757d;
+    margin-bottom: 0.5rem;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.stat-card-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.stat-card-success {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    color: white;
+}
+
+.stat-card-warning {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    color: white;
+}
+
+.stat-card-info {
+    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+    color: white;
+}
+
+/* 调试结果 */
+#debugResult .card {
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+#debugResponseBody {
+    font-size: 0.875rem;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* 表单控件 */
+.form-control, .form-select {
+    font-size: 1rem;
+}
+
+.form-label {
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+}
+
+/* 按钮 */
+.btn {
+    font-weight: 500;
+}
+
+.btn-sm {
+    font-size: 0.875rem;
+}
+
+/* 下拉菜单 */
+.dropdown-menu {
+    min-width: 150px;
+}
+
+.dropdown-item {
+    font-size: 0.875rem;
+}
+
+/* 响应式调整 */
+@media (max-width: 576px) {
+    .container-fluid {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+}
+
+/* 加载动画 */
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+}
+
+/* 空状态 */
+.empty-state {
+    text-align: center;
+    padding: 2rem 1rem;
+}
+
+.empty-state i {
+    font-size: 3rem;
+    color: #dee2e6;
+}
+
+/* 模态框 */
+.modal-content {
+    border: none;
+    border-radius: 0.5rem;
+}
+
+.modal-header {
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.modal-footer {
+    border-top: 1px solid #f0f0f0;
+}
+
+/* 提示信息 */
+.alert {
+    border: none;
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+}
+
+/* 徽章 */
+.badge {
+    padding: 0.35em 0.65em;
+    font-size: 0.75em;
+}
+
+/* 底部导航栏 */
+.bottom-nav {
+    height: 60px;
+    box-shadow: 0 -2px 4px rgba(0,0,0,0.1);
+}
+
+.bottom-nav .nav-link {
+    color: rgba(255,255,255,0.7);
+    padding: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+}
+
+.bottom-nav .nav-link.active {
+    color: #fff;
+}
+
+.bottom-nav .nav-link i {
+    font-size: 1.5rem;
+}
+
+.bottom-nav .nav-link span {
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+}
+
+/* 统计卡片 */
+.statistics-cards .card {
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    margin-bottom: 1rem;
+}
+
+/* 模态框 */
+.modal-dialog {
+    margin: 1rem;
+}
+
+/* 提示消息 */
+.toast {
+    min-width: 250px;
+}
+
+/* 接口列表 */
+.api-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.api-item {
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid #e9ecef;
+    border-radius: 0.5rem;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.api-item:active {
+    background-color: #f8f9fa;
+    transform: scale(0.98);
+}
+
+.api-item .card-body {
+    padding: 0.75rem 1rem;
+}
+
+.api-item .card-title {
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+
+.api-item small {
+    font-size: 0.8rem;
+    word-break: break-all;
+}
+
+.api-item .badge {
+    font-size: 0.75rem;
+    padding: 0.35em 0.65em;
+}
+
+/* 进度条 */
+.progress {
+    height: 1.5rem;
+    border-radius: 0.75rem;
+    background-color: #e9ecef;
+}
+
+.progress-bar {
+    border-radius: 0.75rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.5rem;
+    transition: width 0.3s ease;
+}
+
+/* 运行状态 */
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
+
+/* 测试结果 */
+.module-test-result .card {
+    border-radius: 0.5rem;
+}
+
+.test-results-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.test-results-list .card {
+    border-radius: 0.375rem;
+}
+
+.test-results-list .card-body {
+    padding: 0.5rem 0.75rem;
+}
+
+/* 接口详情 */
+.api-detail pre {
+    font-size: 0.8rem;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.api-detail .form-label {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+/* 测试结果详情 */
+.test-result pre {
+    font-size: 0.8rem;
+    max-height: 250px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.test-result .form-label {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
