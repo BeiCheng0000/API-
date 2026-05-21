@@ -6,13 +6,117 @@
 let _schedulerSelectedProject = '';
 let _schedulerSelectedModule = '';
 
+// ========== 定时任务数据缓存机制 ==========
+// 缓存定时任务列表数据，避免短时间内重复请求 /scheduler/list
+let _schedulerListCache = null;
+let _schedulerListCacheTime = 0;
+let _schedulerListFetchPromise = null;
+const _SCHEDULER_LIST_CACHE_TTL = 3000; // 缓存有效期（毫秒）
+
+/**
+ * 获取定时任务列表数据（带缓存和请求去重）
+ * @param {boolean} forceRefresh - 是否强制刷新
+ * @returns {Promise<Array>} 定时任务列表数据
+ */
+function fetchSchedulerList(forceRefresh = false) {
+    // 如果有正在进行的请求，直接复用该Promise（请求去重）
+    if (_schedulerListFetchPromise) {
+        return _schedulerListFetchPromise;
+    }
+
+    // 如果缓存有效且非强制刷新，直接返回缓存数据
+    if (!forceRefresh && _schedulerListCache && (Date.now() - _schedulerListCacheTime < _SCHEDULER_LIST_CACHE_TTL)) {
+        return Promise.resolve(_schedulerListCache);
+    }
+
+    // 发起新请求
+    _schedulerListFetchPromise = fetch('/scheduler/list')
+        .then(response => {
+            if (!response.ok) throw new Error('网络响应异常');
+            return response.json();
+        })
+        .then(data => {
+            _schedulerListCache = data;
+            _schedulerListCacheTime = Date.now();
+            _schedulerListFetchPromise = null;
+            return data;
+        })
+        .catch(error => {
+            _schedulerListFetchPromise = null;
+            throw error;
+        });
+
+    return _schedulerListFetchPromise;
+}
+
+/**
+ * 清除定时任务列表缓存
+ */
+function invalidateSchedulerListCache() {
+    _schedulerListCache = null;
+    _schedulerListCacheTime = 0;
+}
+
+// ========== 项目数据缓存机制 ==========
+// 缓存项目列表数据，避免短时间内重复请求 /projects/list
+let _projectsListCache = null;       // 缓存的数据
+let _projectsListCacheTime = 0;      // 缓存时间戳
+let _projectsListFetchPromise = null; // 正在进行的请求Promise（用于去重）
+const _PROJECTS_LIST_CACHE_TTL = 3000; // 缓存有效期（毫秒）
+
+/**
+ * 获取项目列表数据（带缓存和请求去重）
+ * 短时间内多次调用只会发一次实际请求，所有调用共享同一份数据
+ * @param {boolean} forceRefresh - 是否强制刷新（跳过缓存读取，但仍复用进行中的请求）
+ * @returns {Promise<Object>} 项目列表数据
+ */
+function fetchProjectsList(forceRefresh = false) {
+    // 如果有正在进行的请求，直接复用该Promise（请求去重，无论是否forceRefresh）
+    if (_projectsListFetchPromise) {
+        return _projectsListFetchPromise;
+    }
+
+    // 如果缓存有效且非强制刷新，直接返回缓存数据
+    if (!forceRefresh && _projectsListCache && (Date.now() - _projectsListCacheTime < _PROJECTS_LIST_CACHE_TTL)) {
+        return Promise.resolve(_projectsListCache);
+    }
+
+    // 发起新请求
+    _projectsListFetchPromise = fetch('/projects/list')
+        .then(response => {
+            if (!response.ok) throw new Error('网络响应异常');
+            return response.json();
+        })
+        .then(data => {
+            _projectsListCache = data;
+            _projectsListCacheTime = Date.now();
+            _projectsListFetchPromise = null; // 请求完成，清除进行中标记
+            return data;
+        })
+        .catch(error => {
+            _projectsListFetchPromise = null; // 请求失败，也要清除进行中标记
+            throw error;
+        });
+
+    return _projectsListFetchPromise;
+}
+
+/**
+ * 清除项目列表缓存（在增删改操作后调用，下次请求会重新获取）
+ */
+function invalidateProjectsListCache() {
+    _projectsListCache = null;
+    _projectsListCacheTime = 0;
+    // 注意：不清除 _projectsListFetchPromise，避免打断正在进行的请求
+}
+
 // 页面加载完成后执行
 document.addEventListener('DOMContentLoaded', function() {
-    // 加载定时任务页面项目树
-    loadSchedulerProjectTree();
-
-    // 加载项目列表
+    // 加载项目列表（loadProjectsList内部会触发请求，loadSchedulerProjectTree复用同一请求）
     loadProjectsList();
+
+    // 加载定时任务页面项目树（会复用loadProjectsList的请求，不会重复发请求）
+    loadSchedulerProjectTree();
 
     // 检查是否有Flash消息
     checkFlashMessages();
@@ -48,12 +152,11 @@ function toggleProject(projectEl) {
 /**
  * 加载项目列表（树形结构）
  */
-function loadProjectsList() {
-    fetch('/projects/list')
-        .then(response => {
-            if (!response.ok) throw new Error('网络响应异常');
-            return response.json();
-        })
+function loadProjectsList(forceRefresh = false) {
+    if (forceRefresh) {
+        invalidateProjectsListCache();
+    }
+    fetchProjectsList(forceRefresh)
         .then(projectsData => {
             const projectsList = document.getElementById('projectsList');
             projectsList.innerHTML = '';
@@ -209,7 +312,7 @@ function clearApisPanel() {
  */
 function refreshProjectsList(activeProject) {
     if (activeProject) _selectedProject = activeProject;
-    loadProjectsList();
+    loadProjectsList(true);
 }
 
 /**
@@ -246,7 +349,7 @@ function addProject() {
         if (result.success) {
             showToast('成功', result.message, 'success');
             bootstrap.Modal.getInstance(document.getElementById('addProjectModal')).hide();
-            loadProjectsList();
+            loadProjectsList(true);
             if (typeof loadTopStats === 'function') loadTopStats();
         } else {
             showToast('错误', result.error, 'danger');
@@ -273,7 +376,7 @@ function deleteProject(projectName) {
     .then(result => {
         if (result.success) {
             showToast('成功', result.message, 'success');
-            loadProjectsList();
+            loadProjectsList(true);
             if (typeof loadTopStats === 'function') loadTopStats();
         } else {
             showToast('错误', result.error, 'danger');
@@ -324,13 +427,8 @@ function updateProject() {
         if (result.success) {
             showToast('成功', result.message, 'success');
             bootstrap.Modal.getInstance(document.getElementById('editProjectModal')).hide();
-            loadProjectsList();
+            loadProjectsList(true);
             if (typeof loadTopStats === 'function') loadTopStats();
-            // 如果当前正在查看该项目，也刷新项目列表
-            const projectsList = document.getElementById('projectsList');
-            if (projectsList) {
-                loadProjectsList();
-            }
         } else {
             showToast('错误', result.error, 'danger');
         }
@@ -383,7 +481,7 @@ function updateModule() {
         if (result.success) {
             showToast('成功', result.message, 'success');
             bootstrap.Modal.getInstance(document.getElementById('editModuleModal')).hide();
-            loadProjectsList();
+            loadProjectsList(true);
             if (typeof loadTopStats === 'function') loadTopStats();
         } else {
             showToast('错误', result.error, 'danger');
@@ -556,8 +654,7 @@ function selectModule(projectName, moduleName) {
  * @param {string} moduleName - 模块名称
  */
 function loadApisList(projectName, moduleName) {
-    fetch(`/projects/list`)
-    .then(response => response.json())
+    fetchProjectsList()
     .then(projectsData => {
         const apisList = document.getElementById('apisList');
         if (!apisList) return;
@@ -651,8 +748,7 @@ function showAddApiModal(projectName, moduleName = '') {
     const moduleSelect = document.getElementById('addApiModuleName');
     moduleSelect.innerHTML = '<option value="">请选择模块</option>';
 
-    fetch('/projects/list')
-        .then(response => response.json())
+    fetchProjectsList()
         .then(projectsData => {
             if (projectsData[projectName] && projectsData[projectName].modules) {
                 const modules = projectsData[projectName].modules;
@@ -820,15 +916,13 @@ function deleteApi(projectName, moduleName, apiId) {
  * 加载定时任务页面的项目树
  */
 function loadSchedulerProjectTree() {
-    fetch('/projects/list')
-    .then(response => response.json())
+    fetchProjectsList()
     .then(projectsData => {
         const container = document.getElementById('schedulerProjectsList');
         if (!container) return;
 
-        // 同时获取定时任务列表，用于统计每个模块的任务数
-        fetch('/scheduler/list')
-        .then(r => r.json())
+        // 同时获取定时任务列表，用于统计每个模块的任务数（使用缓存）
+        fetchSchedulerList()
         .then(jobs => {
             // 统计每个项目/模块的定时任务数
             const jobCountMap = {};
@@ -945,8 +1039,7 @@ function selectSchedulerModule(projectName, moduleName) {
  * 按模块加载定时任务列表
  */
 function loadSchedulerJobsByModule(projectName, moduleName) {
-    fetch('/scheduler/list')
-    .then(response => response.json())
+    fetchSchedulerList()
     .then(jobs => {
         const filtered = jobs.filter(j => j.project_name === projectName && j.module_name === moduleName);
         const container = document.getElementById('schedulerJobsList');
@@ -1009,6 +1102,8 @@ function filterSchedulerProjects(keyword) {
  * 加载定时任务列表（兼容性入口，刷新当前选中模块或项目树）
  */
 function loadSchedulerList() {
+    // 清除缓存，确保获取最新数据
+    invalidateSchedulerListCache();
     // 刷新项目树（更新任务计数）
     loadSchedulerProjectTree();
     // 如果有选中模块，刷新该模块的任务列表

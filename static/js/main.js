@@ -63,7 +63,12 @@ function switchPage(pageName, menuItem) {
         if (topStatCards) topStatCards.style.display = '';
     }
 
-    // 切换到定时任务页面时加载项目树
+    // 切换到API项目页面时加载项目列表（使用缓存，避免重复请求）
+    if (pageName === 'projects' && typeof loadProjectsList === 'function') {
+        loadProjectsList();
+    }
+
+    // 切换到定时任务页面时加载项目树（使用缓存，避免重复请求）
     if (pageName === 'scheduler' && typeof loadSchedulerProjectTree === 'function') {
         loadSchedulerProjectTree();
     }
@@ -589,8 +594,7 @@ function debugApi(projectName, moduleName, caseIndex) {
 
     // 模式1：从项目列表点击调试，填充表单数据并跳转到调试页
     if (projectName && caseIndex !== undefined) {
-        fetch('/projects/list')
-            .then(response => response.json())
+        fetchProjectsList()
             .then(projectsData => {
                 let apiData = null;
                 let foundProjectName = '';
@@ -891,6 +895,10 @@ function addApi() {
  * 加载定时任务列表（兼容性入口，刷新当前选中模块或项目树）
  */
 function loadSchedulerList() {
+    // 清除缓存，确保获取最新数据
+    if (typeof invalidateSchedulerListCache === 'function') {
+        invalidateSchedulerListCache();
+    }
     // 刷新项目树（更新任务计数）
     if (typeof loadSchedulerProjectTree === 'function') {
         loadSchedulerProjectTree();
