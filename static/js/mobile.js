@@ -1487,7 +1487,7 @@ async function showStatDetail(recordId) {
                                 <thead class="table-light"><tr><th>类型</th><th>字段</th><th>期望</th><th>实际</th><th>结果</th></tr></thead>
                                 <tbody>
                                     ${assertionResults.map(a => {
-                                        const passed = a.passed !== false;
+                                        const passed = a.passed === true;
                                         return `<tr>
                                             <td><small>${a.type || '-'}</small></td>
                                             <td><small>${a.field || '-'}</small></td>

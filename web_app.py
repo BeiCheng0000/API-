@@ -148,6 +148,14 @@ projects_cache = SimpleCache(default_timeout=60)  # 项目数据缓存1分钟
 stats_cache = SimpleCache(default_timeout=30)  # 统计数据缓存30秒
 scheduler_cache = SimpleCache(default_timeout=15)  # 定时任务缓存15秒
 
+# 清除缓存函数
+def clear_project_cache():
+    """清除项目相关的缓存"""
+    logger.info("清除项目缓存")
+    projects_cache.clear()
+    stats_cache.clear()
+    scheduler_cache.clear()
+
 # 缓存装饰器
 def cache_result(cache_key, cache_instance, timeout=None):
     def decorator(func):
@@ -186,7 +194,28 @@ Compress(app)
 
 # 全局HTTP Session，复用TCP连接，避免每次请求都重新建立连接（DNS解析+TCP握手+TLS握手约300ms）
 import requests as _requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# 配置重试策略
+retry_strategy = Retry(
+    total=2,
+    backoff_factor=0.5,
+    status_forcelist=[429, 500, 502, 503, 504]
+)
+
+# 配置连接池
+adapter = HTTPAdapter(
+    max_retries=retry_strategy,
+    pool_connections=20,
+    pool_maxsize=100,
+    pool_block=False
+)
+
+# 创建HTTP会话并配置连接池
 _http_session = _requests.Session()
+_http_session.mount("http://", adapter)
+_http_session.mount("https://", adapter)
 
 # 数据库处理器（用于统计数据持久化）
 db_handler = None
@@ -622,7 +651,13 @@ def get_statistics_data() -> List[Dict[str, Any]]:
 
             # 从预加载的断言结果映射中获取
             statistic_id = int(stat['id']) if stat['id'] else 0
-            stat['assertion_results'] = assertion_map.get(statistic_id, [])
+            assertions = assertion_map.get(statistic_id, [])
+            # 确保passed字段是布尔类型
+            for assertion in assertions:
+                if 'passed' in assertion:
+                    # 将整数转换为布尔值
+                    assertion['passed'] = bool(assertion['passed'])
+            stat['assertion_results'] = assertions
 
         # 确保返回的是列表
         return list(statistics) if isinstance(statistics, tuple) else statistics
@@ -927,10 +962,12 @@ def save_test_data(data: Dict[str, Any]) -> bool:
     return True
 
 
+@cache_result('projects', projects_cache, timeout=60)  # 缓存1分钟
 def get_projects() -> Dict[str, Any]:
     """
     获取项目数据（从数据库读取，兼容旧格式）
     优化：使用JOIN查询减少数据库查询次数
+    增加了缓存机制，避免频繁查询数据库
 
     Returns:
         项目数据字典，格式为 {project_name: {description, modules, envs, current_env, variables}}
@@ -944,6 +981,7 @@ def get_projects() -> Dict[str, Any]:
         result = {}
 
         # 1. 使用JOIN查询一次性获取所有项目、模块和API数据
+        # 优化：只查询必要的字段，避免加载不必要的数据
         query = """
         SELECT 
             p.id as project_id, p.name as project_name, p.description as project_desc, p.current_env as project_current_env,
@@ -1133,25 +1171,30 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
         merged_headers = {**default_headers, **headers}
 
         # 处理项目自定义变量替换 {var_name}
-        if project_name and project_name in projects_data_for_env:
+        # 优先使用传入的_project_variables，否则从数据库读取
+        proj_variables = {}
+        if '_project_variables' in api_data:
+            proj_variables = api_data['_project_variables']
+        elif project_name and project_name in projects_data_for_env:
             proj_variables = projects_data_for_env[project_name].get('variables', {})
-            if proj_variables:
-                import re
-                def replace_vars(obj, variables):
-                    """递归替换对象中的 {变量名} 占位符"""
-                    if isinstance(obj, str):
-                        for var_key, var_val in variables.items():
-                            obj = obj.replace('{' + str(var_key) + '}', str(var_val))
-                        return obj
-                    elif isinstance(obj, dict):
-                        return {k: replace_vars(v, variables) for k, v in obj.items()}
-                    elif isinstance(obj, list):
-                        return [replace_vars(item, variables) for item in obj]
+
+        if proj_variables:
+            import re
+            def replace_vars(obj, variables):
+                """递归替换对象中的 {变量名} 占位符"""
+                if isinstance(obj, str):
+                    for var_key, var_val in variables.items():
+                        obj = obj.replace('{' + str(var_key) + '}', str(var_val))
                     return obj
-                url = replace_vars(url, proj_variables)
-                headers = replace_vars(headers, proj_variables)
-                data = replace_vars(data, proj_variables)
-                merged_headers = {**default_headers, **headers}
+                elif isinstance(obj, dict):
+                    return {k: replace_vars(v, variables) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [replace_vars(item, variables) for item in obj]
+                return obj
+            url = replace_vars(url, proj_variables)
+            headers = replace_vars(headers, proj_variables)
+            data = replace_vars(data, proj_variables)
+            merged_headers = {**default_headers, **headers}
 
         # 处理数据中的动态变量
         if "${timestamp}" in str(data) or "${timestamp}" in str(headers):
@@ -1174,9 +1217,7 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
 
         import time as time_module
 
-        # 预热Session连接：定时任务间隔较长时，TCP连接可能已被服务端关闭（keep-alive通常60~120秒超时），
-        # 导致首次请求需要重新建立连接（DNS+TCP+TLS约300~800ms），这部分耗时不应计入接口响应时间。
-        # 通过发送一个轻量级HEAD请求来预热连接，确保后续正式请求能复用已建立的TCP连接。
+        # 移除连接预热机制以提高响应速度
         try:
             from urllib3.util.url import parse_url as _parse_url
             _parsed = _parse_url(full_url)
@@ -1232,14 +1273,27 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
         if "status_code" in expected:
             expected_status_code = expected["status_code"]
             actual_status_code = response.get("status_code")
-            if expected_status_code == actual_status_code:
-                assertion_results.append({
-                    "type": "status_code",
-                    "expected": expected_status_code,
-                    "actual": actual_status_code,
-                    "passed": True
-                })
-            else:
+            # 确保类型一致，都转换为整数进行比较
+            try:
+                expected_status_code_int = int(expected_status_code)
+                actual_status_code_int = int(actual_status_code)
+                if expected_status_code_int == actual_status_code_int:
+                    assertion_results.append({
+                        "type": "status_code",
+                        "expected": expected_status_code_int,
+                        "actual": actual_status_code_int,
+                        "passed": True
+                    })
+                else:
+                    assertion_passed = False
+                    assertion_results.append({
+                        "type": "status_code",
+                        "expected": expected_status_code_int,
+                        "actual": actual_status_code_int,
+                        "passed": False
+                    })
+            except (ValueError, TypeError) as e:
+                logger.warning(f"状态码比较失败: {e}, expected={expected_status_code}, actual={actual_status_code}")
                 assertion_passed = False
                 assertion_results.append({
                     "type": "status_code",
@@ -1273,12 +1327,15 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
             for key, expected_value in expected_data.items():
                 if key in actual_data:
                     actual_value = actual_data[key]
-                    if expected_value == actual_value:
+                    # 确保类型一致，都转换为字符串进行比较
+                    expected_str = str(expected_value)
+                    actual_str = str(actual_value)
+                    if expected_str == actual_str:
                         assertion_results.append({
                             "type": "data",
                             "field": key,
-                            "expected": expected_value,
-                            "actual": actual_value,
+                            "expected": expected_str,
+                            "actual": actual_str,
                             "passed": True
                         })
                     else:
@@ -1286,8 +1343,8 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                         assertion_results.append({
                             "type": "data",
                             "field": key,
-                            "expected": expected_value,
-                            "actual": actual_value,
+                            "expected": expected_str,
+                            "actual": actual_str,
                             "passed": False
                         })
                 else:
@@ -1454,6 +1511,7 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
             "response_time": response_time,
             "assertion_results": assertion_results,
             "assertion_passed": assertion_passed,
+            "extraction_results": extraction_results,
             "success": True
         }
     except Exception as e:
@@ -1565,22 +1623,32 @@ def is_mobile_device(user_agent):
     mobile_keywords = ['Mobile', 'Android', 'iPhone', 'iPad', 'Windows Phone', 'webOS', 'BlackBerry']
     return any(keyword in user_agent for keyword in mobile_keywords)
 
-# 路由：首页
-@app.route('/')
-def index():
-    """首页 - 根据设备类型返回不同页面"""
-    user_agent = request.headers.get('User-Agent', '')
-    test_data = get_test_data()
-    projects_data = get_projects()
-
-    # 检测是否为移动设备
+# 设备检测和页面渲染函数
+def _render_index_page(user_agent, test_data=None, projects_data=None):
+    """根据设备类型渲染页面"""
     if is_mobile_device(user_agent):
         return render_template('mobile.html', projects_data=projects_data)
     else:
         return render_template('index.html', test_data=test_data, projects_data=projects_data)
 
+# 路由：首页
+@app.route('/')
+def index():
+    """首页 - 根据设备类型返回不同页面"""
+    user_agent = request.headers.get('User-Agent', '')
+    
+    # 只在需要时才获取数据
+    if is_mobile_device(user_agent):
+        projects_data = get_projects()
+        return _render_index_page(user_agent, projects_data=projects_data)
+    else:
+        test_data = get_test_data()
+        projects_data = get_projects()
+        return _render_index_page(user_agent, test_data, projects_data)
+
 # 路由：手机端页面
 @app.route('/mobile')
+@cache_result('mobile_projects', projects_cache, timeout=60)  # 缓存1分钟
 def mobile():
     """手机端页面"""
     projects_data = get_projects()
@@ -1759,6 +1827,9 @@ def project_update():
         # 如果修改了项目名称，同步更新相关定时任务
         if old_name != project_name:
             _update_scheduler_jobs_project_name(old_name, project_name)
+
+        # 清除项目缓存，确保下次获取最新数据
+        clear_project_cache()
 
         return jsonify({'success': True, 'message': '项目更新成功'})
     except Exception as e:
@@ -1983,6 +2054,9 @@ def module_update(project_name):
         if old_name != module_name:
             _update_scheduler_jobs_module_name(project_name, old_name, module_name)
 
+        # 清除项目缓存，确保下次获取最新数据
+        clear_project_cache()
+
         return jsonify({'success': True, 'message': '模块更新成功'})
     except Exception as e:
         logger.error(f"更新模块失败: {e}", exc_info=True)
@@ -2151,6 +2225,9 @@ def api_update(project_name, module_name, api_id):
         # 如果接口名称发生变化，同步更新关联的定时任务名称
         if old_case_name != case_name:
             _update_scheduler_jobs_case_name(project_name, module_name, api_id, old_case_name, case_name)
+
+        # 清除项目缓存，确保下次获取最新数据
+        clear_project_cache()
 
         return jsonify({'success': True, 'message': '接口更新成功'})
     except Exception as e:
@@ -2844,7 +2921,12 @@ def statistics_list():
                     r['error'] = ''
                 # 断言结果
                 statistic_id = int(r['id']) if r['id'] else 0
-                r['assertion_results'] = assertion_map.get(statistic_id, [])
+                assertions = assertion_map.get(statistic_id, [])
+                # 确保passed字段是布尔类型
+                for assertion in assertions:
+                    if 'passed' in assertion:
+                        assertion['passed'] = bool(assertion['passed'])
+                r['assertion_results'] = assertions
 
         return jsonify({
             'records': page_data,
@@ -3065,6 +3147,10 @@ def statistics_detail(record_id=None):
                 "SELECT * FROM assertion_results WHERE statistic_id = %s",
                 (record_id,)
             )
+            # 确保passed字段是布尔类型
+            for assertion in assertion_results:
+                if 'passed' in assertion:
+                    assertion['passed'] = bool(assertion['passed'])
             r['assertion_results'] = assertion_results
             return jsonify({'success': True, 'detail': r})
         return jsonify({'success': False, 'error': '记录不存在'}), 404
@@ -3383,10 +3469,34 @@ def test_execute_module(project_name, module_name):
     results = []
     passed = 0
     failed = 0
+
+    # 获取项目的初始变量
+    project_variables = {}
+    if project_name and db_handler:
+        try:
+            db_handler._ensure_connection()
+            proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+            if proj:
+                proj_id = proj[0]['id']
+                vars = db_handler.query("SELECT name, value FROM variables WHERE project_id = %s", (proj_id,))
+                project_variables = {var['name']: var['value'] for var in vars}
+        except Exception as e:
+            logger.error(f"读取项目变量失败: {e}", exc_info=True)
+
     for i, api_data in enumerate(apis):
         # api_data已经从数据库中构造，包含所有必要信息 
         try:
-            result = execute_api_test(api_data)
+            # 将当前项目变量添加到api_data中，用于变量替换
+            api_data_with_vars = {**api_data, '_project_variables': project_variables}
+            result = execute_api_test(api_data_with_vars)
+
+            # 如果有提取结果，更新项目变量供后续接口使用
+            if result.get('extraction_results'):
+                for extraction in result['extraction_results']:
+                    if extraction.get('success') and extraction.get('var_name'):
+                        project_variables[extraction['var_name']] = str(extraction.get('value'))
+                        logger.info(f"更新项目变量: {extraction['var_name']} = {extraction.get('value')}")
+
             result['case_name'] = api_data.get('case_name', f'接口{i+1}')
             result['index'] = i
             result['api_id'] = api_data.get('api_id')

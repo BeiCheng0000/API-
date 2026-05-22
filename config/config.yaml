@@ -28,6 +28,9 @@ database:
     password: ""           # ⚠️ 请通过环境变量 DB_PASSWORD 设置，不要在此填写
     database: test_db
     charset: utf8mb4
+    connect_timeout: 3      # 连接超时时间（秒），避免长时间等待
+    read_timeout: 5         # 读取超时时间（秒），避免查询长时间阻塞
+    write_timeout: 5        # 写入超时时间（秒），避免写入长时间阻塞
   mongodb:
     host: localhost
     port: 27017

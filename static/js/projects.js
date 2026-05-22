@@ -1770,8 +1770,8 @@ function showTestResult(result) {
                     fieldText = assertion.field;
                 }
 
-                const resultClass = assertion.passed ? 'success' : 'danger';
-                const resultText = assertion.passed ? '通过' : '失败';
+                const resultClass = assertion.passed === true ? 'success' : 'danger';
+                const resultText = assertion.passed === true ? '通过' : '失败';
 
                 row.innerHTML = `
                     <td>${typeText}</td>

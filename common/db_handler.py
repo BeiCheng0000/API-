@@ -94,6 +94,9 @@ class MySQLHandler(DBHandler):
                 password=password,
                 database=self.db_config.get("database", "test_db"),
                 charset=self.db_config.get("charset", "utf8mb4"),
+                connect_timeout=self.db_config.get("connect_timeout", 3),
+                read_timeout=self.db_config.get("read_timeout", 5),
+                write_timeout=self.db_config.get("write_timeout", 5),
                 cursorclass=pymysql.cursors.DictCursor
             )
             self.cursor = self.connection.cursor()
@@ -165,21 +168,16 @@ class MySQLHandler(DBHandler):
             避免重复加锁导致死锁。外部调用请使用 _ensure_connection()。
 
         处理逻辑：
-            1. 如果连接和游标存在，通过 ping() 测试连接有效性
-            2. ping 失败或连接为空时，通过 _create_connection() 重新建立连接
+            1. 如果连接和游标存在，直接使用，不进行ping检查（避免每次请求都产生网络往返）
+            2. 连接为空时，通过 _create_connection() 建立连接
+            3. 操作失败时在execute/query中重试重连
         """
-        try:
-            if self.connection and self.cursor:
-                self.connection.ping(reconnect=True)
-                if not self.cursor or self.cursor.connection != self.connection:
-                    self.cursor = self.connection.cursor()
-        except Exception:
-            # 连接失效或为空，重新连接
+        if not self.connection or not self.cursor:
             try:
                 self._create_connection()
-                logger.info(f"重新连接MySQL数据库成功: {self.db_config.get('host', 'localhost')}")
+                logger.info(f"连接MySQL数据库成功: {self.db_config.get('host', 'localhost')}")
             except Exception as e:
-                logger.error(f"重新连接MySQL数据库失败: {e}")
+                logger.error(f"连接MySQL数据库失败: {e}")
                 raise
 
     def query(self, sql: str, params: Optional[Union[Dict[str, Any], tuple]] = None) -> List[Dict[str, Any]]:
