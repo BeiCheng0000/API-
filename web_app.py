@@ -108,7 +108,9 @@ from common.yaml_handler import YamlHandler
 from common.logger_handler import logger
 from common.config_handler import env_config
 from common.db_handler import MySQLHandler
-from utils.cache_bypass import _get_projects_directly
+from utils.cache_bypass_new import _get_projects_directly
+from utils.session_manager import session_manager
+from utils.get_projects_fixed_new import get_projects as get_projects_fixed
 
 # 缓存相关
 from functools import wraps
@@ -963,115 +965,9 @@ def save_test_data(data: Dict[str, Any]) -> bool:
     return True
 
 
-@cache_result('projects', projects_cache, timeout=60)  # 缓存1分钟
 def get_projects() -> Dict[str, Any]:
-    """
-    获取项目数据（从数据库读取，兼容旧格式）
-    优化：使用JOIN查询减少数据库查询次数
-    增加了缓存机制，避免频繁查询数据库
-
-    Returns:
-        项目数据字典，格式为 {project_name: {description, modules, envs, current_env, variables}}
-    """
-    try:
-        if not db_handler:
-            return {}
-
-        db_handler._ensure_connection()
-
-        result = {}
-
-        # 1. 使用JOIN查询一次性获取所有项目、模块和API数据
-        # 优化：只查询必要的字段，避免加载不必要的数据
-        query = """
-        SELECT 
-            p.id as project_id, p.name as project_name, p.description as project_desc, p.current_env as project_current_env,
-            m.id as module_id, m.name as module_name, m.description as module_desc,
-            a.id as api_id, a.case_name, a.url, a.method, a.headers, a.data, a.expected, a.extractions
-        FROM projects p
-        LEFT JOIN modules m ON p.id = m.project_id
-        LEFT JOIN apis a ON m.id = a.module_id
-        ORDER BY p.id, m.id, a.id
-        """
-
-        all_data = db_handler.query(query)
-
-        # 按项目组织数据
-        projects_dict = {}
-        for row in all_data:
-            project_id = row['project_id']
-            project_name = row['project_name']
-
-            if project_id not in projects_dict:
-                projects_dict[project_id] = {
-                    'name': project_name,
-                    'description': row['project_desc'] or '',
-                    'current_env': row['project_current_env'] or '',
-                    'modules': {},
-                    'envs': {},
-                    'variables': {}
-                }
-
-            # 处理模块数据
-            module_id = row['module_id']
-            if module_id and module_id not in projects_dict[project_id]['modules']:
-                projects_dict[project_id]['modules'][row['module_name']] = {
-                    'description': row['module_desc'] or '',
-                    'apis': []
-                }
-
-            # 处理API数据
-            api_id = row['api_id']
-            if api_id:
-                api_item = {
-                    'case_name': row['case_name'] or '',
-                    'url': row['url'] or '',
-                    'method': row['method'] or 'GET',
-                    'headers': row['headers'] if isinstance(row['headers'], dict) else {},
-                    'data': row['data'] if isinstance(row['data'], (dict, str)) else {},
-                    'expected': row['expected'] if isinstance(row['expected'], dict) else {},
-                    'extractions': row['extractions'] if isinstance(row['extractions'], dict) else {},
-                }
-                projects_dict[project_id]['modules'][row['module_name']]['apis'].append(api_item)
-
-        # 2. 获取环境配置
-        envs_query = "SELECT project_id, name, base_url FROM environments ORDER BY project_id, id"
-        envs_data = db_handler.query(envs_query)
-
-        for row in envs_data:
-            project_id = row['project_id']
-            if project_id in projects_dict:
-                if 'envs' not in projects_dict[project_id]:
-                    projects_dict[project_id]['envs'] = {}
-                projects_dict[project_id]['envs'][row['name']] = {'base_url': row.get('base_url', '') or ''}
-
-        # 3. 获取变量
-        vars_query = "SELECT project_id, name, value FROM variables ORDER BY project_id, id"
-        vars_data = db_handler.query(vars_query)
-
-        for row in vars_data:
-            project_id = row['project_id']
-            if project_id in projects_dict:
-                if 'variables' not in projects_dict[project_id]:
-                    projects_dict[project_id]['variables'] = {}
-                projects_dict[project_id]['variables'][row['name']] = row.get('value', '') or ''
-
-        # 4. 转换为最终格式
-        for project_id, project_data in projects_dict.items():
-            project_name = project_data['name']
-            result[project_name] = {
-                'description': project_data['description'],
-                'modules': project_data['modules'],
-                'envs': project_data['envs'],
-                'current_env': project_data['current_env'],
-                'variables': project_data['variables']
-            }
-
-        return result
-
-    except Exception as e:
-        logger.error(f"从数据库读取项目数据失败: {e}")
-        return {}
+    # Use fixed function to always get latest data
+    return get_projects_fixed()
 
 
 def _get_project_current_env(project_id: int) -> str:
@@ -1172,25 +1068,47 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
         merged_headers = {**default_headers, **headers}
 
         # 处理项目自定义变量替换 {var_name}
-        # 优先使用传入的_project_variables，否则从数据库读取
+        # 始终从数据库读取最新变量，确保拿到前序接口提取的最新值（如token）
         proj_variables = {}
-        if '_project_variables' in api_data:
-            proj_variables = api_data['_project_variables']
-        elif project_name and project_name in projects_data_for_env:
-            proj_variables = projects_data_for_env[project_name].get('variables', {})
+        if project_name and db_handler:
+            try:
+                db_handler._ensure_connection()
+                proj_row = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+                if proj_row:
+                    proj_id_for_vars = proj_row[0]['id']
+                    vars_rows = db_handler.query("SELECT name, value FROM variables WHERE project_id = %s", (proj_id_for_vars,))
+                    proj_variables = {var['name']: var['value'] for var in vars_rows}
+                    logger.info(f"[变量替换] 从数据库读取最新项目变量: {proj_variables}")
+            except Exception as e:
+                logger.error(f"[变量替换] 读取项目变量失败: {e}", exc_info=True)
+                # 降级：从项目配置缓存读取
+                if project_name in projects_data_for_env:
+                    proj_variables = dict(projects_data_for_env[project_name].get('variables', {}))
 
         if proj_variables:
             import re
-            def replace_vars(obj, variables):
-                """递归替换对象中的 {变量名} 占位符"""
+            # 变量名模式，匹配 {var_name}
+            var_pattern = re.compile(r'\{(\w+)\}')
+
+            def replace_vars(obj, variables, max_rounds=10):
+                """递归替换对象中的 {变量名} 占位符，支持嵌套变量（如 Authorization: Bearer {access_token}）"""
                 if isinstance(obj, str):
-                    for var_key, var_val in variables.items():
-                        obj = obj.replace('{' + str(var_key) + '}', str(var_val))
+                    for _ in range(max_rounds):
+                        matches = var_pattern.findall(obj)
+                        if not matches:
+                            break
+                        changed = False
+                        for var_key in matches:
+                            if var_key in variables:
+                                obj = obj.replace('{' + str(var_key) + '}', str(variables[var_key]))
+                                changed = True
+                        if not changed:
+                            break
                     return obj
                 elif isinstance(obj, dict):
-                    return {k: replace_vars(v, variables) for k, v in obj.items()}
+                    return {k: replace_vars(v, variables, max_rounds) for k, v in obj.items()}
                 elif isinstance(obj, list):
-                    return [replace_vars(item, variables) for item in obj]
+                    return [replace_vars(item, variables, max_rounds) for item in obj]
                 return obj
             url = replace_vars(url, proj_variables)
             headers = replace_vars(headers, proj_variables)
@@ -1218,12 +1136,17 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
 
         import time as time_module
 
+        # 使用独立会话，避免不同任务之间的token相互影响
+        # 从api_data中获取任务ID，如果没有则使用默认值
+        task_id = api_data.get('task_id', 'default')
+        task_session = session_manager.get_session(task_id)
+
         # 移除连接预热机制以提高响应速度
         try:
             from urllib3.util.url import parse_url as _parse_url
             _parsed = _parse_url(full_url)
             _warmup_url = f"{_parsed.scheme}://{_parsed.auth or ''}{_parsed.host}{':' + str(_parsed.port) if _parsed.port else ''}/"
-            _http_session.request("HEAD", _warmup_url, timeout=5)
+            task_session.request("HEAD", _warmup_url, timeout=5)
         except Exception:
             pass  # 预热失败不影响后续请求
 
@@ -1237,13 +1160,13 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
             request_kwargs = {'json': data, 'headers': merged_headers, 'timeout': timeout}
 
         if method == "GET":
-            raw_response = _http_session.request("GET", full_url, params=data, headers=merged_headers, timeout=timeout)
+            raw_response = task_session.request("GET", full_url, params=data, headers=merged_headers, timeout=timeout)
         elif method == "POST":
-            raw_response = _http_session.request("POST", full_url, **request_kwargs)
+            raw_response = task_session.request("POST", full_url, **request_kwargs)
         elif method == "PUT":
-            raw_response = _http_session.request("PUT", full_url, **request_kwargs)
+            raw_response = task_session.request("PUT", full_url, **request_kwargs)
         elif method == "DELETE":
-            raw_response = _http_session.request("DELETE", full_url, headers=merged_headers, timeout=timeout)
+            raw_response = task_session.request("DELETE", full_url, headers=merged_headers, timeout=timeout)
         else:
             raise ValueError(f"不支持的请求方法: {method}")
 
@@ -1363,31 +1286,12 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
         if "extractions" in api_data:
             extractions = api_data["extractions"]
             if isinstance(extractions, dict):
-                # 获取项目变量
-                project_name = api_data.get("project", "")
-                project_variables = {}
-                
-                # 从数据库读取项目变量
-                if project_name and db_handler:
-                    try:
-                        db_handler._ensure_connection()
-                        # 查询项目ID
-                        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
-                        if proj:
-                            proj_id = proj[0]['id']
-                            # 查询项目的所有变量
-                            vars = db_handler.query("SELECT name, value FROM variables WHERE project_id = %s", (proj_id,))
-                            project_variables = {var['name']: var['value'] for var in vars}
-                            logger.info(f"从数据库读取项目变量: {project_variables}")
-                    except Exception as e:
-                        logger.error(f"读取项目变量失败: {e}", exc_info=True)
-                
                 # 处理每个提取项
                 for var_name, extraction_config in extractions.items():
                     if isinstance(extraction_config, dict) and "path" in extraction_config:
                         path = extraction_config["path"]
                         default_value = extraction_config.get("default", None)
-                        
+
                         # 尝试从响应中提取值
                         extracted_value = None
                         try:
@@ -1395,14 +1299,14 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                             if path:
                                 parts = path.split(".")
                                 current = response.get("data", {})
-                                
+
                                 # 确保current是字典类型
                                 if isinstance(current, str):
                                     try:
                                         current = json.loads(current)
                                     except (json.JSONDecodeError, TypeError):
                                         current = {}
-                                
+
                                 # 遍历路径
                                 for part in parts:
                                     if isinstance(current, dict) and part in current:
@@ -1410,21 +1314,46 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                                     else:
                                         current = None
                                         break
-                                
+
                                 extracted_value = current if current is not None else default_value
                         except Exception as e:
                             logger.warning(f"提取变量 {var_name} 时出错: {e}")
                             extracted_value = default_value
-                        
-                        # 更新项目变量
+
+                        # 记录提取结果
                         if extracted_value is not None:
-                            project_variables[var_name] = str(extracted_value)
                             extraction_results.append({
                                 "var_name": var_name,
                                 "path": path,
                                 "value": extracted_value,
                                 "success": True
                             })
+                            # 立即保存到数据库，确保后续接口能拿到最新变量
+                            if project_name and db_handler:
+                                try:
+                                    db_handler._ensure_connection()
+                                    proj_row = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+                                    if proj_row:
+                                        proj_id_for_save = proj_row[0]['id']
+                                        existing_var = db_handler.query(
+                                            "SELECT id FROM variables WHERE project_id = %s AND name = %s",
+                                            (proj_id_for_save, var_name)
+                                        )
+                                        if existing_var:
+                                            db_handler.execute(
+                                                "UPDATE variables SET value = %s WHERE project_id = %s AND name = %s",
+                                                (str(extracted_value), proj_id_for_save, var_name)
+                                            )
+                                        else:
+                                            db_handler.execute(
+                                                "INSERT INTO variables (project_id, name, value) VALUES (%s, %s, %s)",
+                                                (proj_id_for_save, var_name, str(extracted_value))
+                                            )
+                                        logger.info(f"[变量提取] 立即保存到数据库: {var_name} = {extracted_value}")
+                                        # 清除缓存，确保后续接口读取到最新值
+                                        clear_project_cache()
+                                except Exception as e:
+                                    logger.error(f"[变量提取] 保存变量到数据库失败: {e}", exc_info=True)
                         else:
                             extraction_results.append({
                                 "var_name": var_name,
@@ -1432,37 +1361,6 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                                 "value": None,
                                 "success": False
                             })
-                
-                # 保存项目变量到数据库
-                if project_name and db_handler:
-                    try:
-                        db_handler._ensure_connection()
-                        # 查询项目ID
-                        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
-                        if proj:
-                            proj_id = proj[0]['id']
-                            # 保存或更新每个变量
-                            for var_name, var_value in project_variables.items():
-                                # 检查变量是否已存在
-                                existing_var = db_handler.query(
-                                    "SELECT id FROM variables WHERE project_id = %s AND name = %s",
-                                    (proj_id, var_name)
-                                )
-                                if existing_var:
-                                    # 更新变量
-                                    db_handler.execute(
-                                        "UPDATE variables SET value = %s WHERE project_id = %s AND name = %s",
-                                        (str(var_value), proj_id, var_name)
-                                    )
-                                else:
-                                    # 插入新变量
-                                    db_handler.execute(
-                                        "INSERT INTO variables (project_id, name, value) VALUES (%s, %s, %s)",
-                                        (proj_id, var_name, str(var_value))
-                                    )
-                            logger.info(f"项目变量保存成功: {project_variables}")
-                    except Exception as e:
-                        logger.error(f"保存项目变量失败: {e}", exc_info=True)
 
         # 构建显示用的完整URL（对于GET请求，将params拼接到URL中显示）
         display_url = full_url
@@ -1500,7 +1398,7 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as stat_err:
             logger.error(f"记录统计数据时发生异常: {stat_err}")
 
-        # 返回测试结果
+        # 返回测试结果，包含更新后的项目变量（供批量执行时传递给下一个接口）
         return {
             "request_method": method,
             "request_url": display_url,
@@ -1604,12 +1502,14 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
                             'extractions': json.loads(api_data.get('extractions', '{}')),
                             'project': project_name,
                             'module': module_name,
-                            'source': '定时'
+                            'source': '定时',
+                            'task_id': f"{project_name}_{module_name}_{api_id}_{int(time.time())}"
                         }
         except Exception as e:
             logger.error(f"定时测试获取接口数据失败: {e}", exc_info=True)
 
     if api_data:
+        # 变量替换和提取均在execute_api_test内部完成，每次执行前从数据库读取最新变量
         result = execute_api_test(api_data)
         # logger.info(f"定时测试结果: {project_name}/{module_name}[{api_id}] - {json.dumps(result, ensure_ascii=False)}")
     else:
@@ -3471,32 +3371,19 @@ def test_execute_module(project_name, module_name):
     passed = 0
     failed = 0
 
-    # 获取项目的初始变量
-    project_variables = {}
-    if project_name and db_handler:
-        try:
-            db_handler._ensure_connection()
-            proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
-            if proj:
-                proj_id = proj[0]['id']
-                vars = db_handler.query("SELECT name, value FROM variables WHERE project_id = %s", (proj_id,))
-                project_variables = {var['name']: var['value'] for var in vars}
-        except Exception as e:
-            logger.error(f"读取项目变量失败: {e}", exc_info=True)
+    # 变量由execute_api_test内部从数据库读取，无需外部传递
 
     for i, api_data in enumerate(apis):
         # api_data已经从数据库中构造，包含所有必要信息 
         try:
-            # 将当前项目变量添加到api_data中，用于变量替换
-            api_data_with_vars = {**api_data, '_project_variables': project_variables}
-            result = execute_api_test(api_data_with_vars)
+            # 变量由execute_api_test内部从数据库读取最新值
+            result = execute_api_test(api_data)
 
-            # 如果有提取结果，更新项目变量供后续接口使用
+            # 变量已由execute_api_test提取并保存到数据库，下一个接口自动从数据库读取最新值
             if result.get('extraction_results'):
                 for extraction in result['extraction_results']:
                     if extraction.get('success') and extraction.get('var_name'):
-                        project_variables[extraction['var_name']] = str(extraction.get('value'))
-                        logger.info(f"更新项目变量: {extraction['var_name']} = {extraction.get('value')}")
+                        logger.info(f"[运行全部] 接口提取变量已保存到数据库: {extraction['var_name']} = {extraction.get('value')}")
 
             result['case_name'] = api_data.get('case_name', f'接口{i+1}')
             result['index'] = i
@@ -3584,6 +3471,7 @@ def test_execute(project_name, module_name, api_id):
 
         logger.info(f"测试数据: {test_data}")
 
+        # 变量替换和提取均在execute_api_test内部完成，每次执行前从数据库读取最新变量
         # 执行测试
         result = execute_api_test(test_data)
         return jsonify(result)
