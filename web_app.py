@@ -108,6 +108,7 @@ from common.yaml_handler import YamlHandler
 from common.logger_handler import logger
 from common.config_handler import env_config
 from common.db_handler import MySQLHandler
+from utils.cache_bypass import _get_projects_directly
 
 # 缓存相关
 from functools import wraps
@@ -1567,8 +1568,8 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
         module_name: 模块名称
         api_id: 接口ID（数据库ID）
     """
-    # 获取项目级别的环境配置
-    projects_data_for_env = get_projects()
+    # 获取项目级别的环境配置 - 直接从数据库获取最新数据，不使用缓存
+    projects_data_for_env = _get_projects_directly()
     proj_env_name = ''
     if project_name in projects_data_for_env:
         proj_env_name = projects_data_for_env[project_name].get('current_env', '')
