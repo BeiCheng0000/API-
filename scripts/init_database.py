@@ -246,6 +246,7 @@ class DatabaseInitializer:
             `module_name` VARCHAR(255) NOT NULL COMMENT '模块名称',
             `case_index` INT NOT NULL COMMENT '用例索引',
             `cron_expression` VARCHAR(100) NOT NULL COMMENT 'Cron表达式',
+            `sort_order` INT DEFAULT 0 COMMENT '执行顺序（越小越先执行）',
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
             `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
             INDEX `idx_project` (`project_name`),
@@ -253,6 +254,16 @@ class DatabaseInitializer:
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='定时任务表'
         """
         self.db_handler.execute(sql)
+        # 为已有表添加 sort_order 字段（兼容旧数据库）
+        try:
+            self.db_handler.execute("ALTER TABLE scheduler_jobs ADD COLUMN `sort_order` INT DEFAULT 0 COMMENT '执行顺序'")
+            logger.info("scheduler_jobs 表添加 sort_order 字段成功")
+        except Exception as e:
+            err_msg = str(e).lower()
+            if 'duplicate' in err_msg or 'already exists' in err_msg:
+                pass  # 字段已存在，正常忽略
+            else:
+                logger.warning(f"添加 sort_order 字段时出错: {e}")
         logger.info("定时任务表创建成功")
 
     def create_test_statistics_table(self):

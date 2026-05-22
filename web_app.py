@@ -304,22 +304,34 @@ def _save_scheduler_jobs():
 
         db_handler._ensure_connection()
 
+        # 先读取当前数据库中的排序信息，避免保存时丢失
+        existing_orders = {}
+        try:
+            existing_rows = db_handler.query("SELECT id, sort_order FROM scheduler_jobs")
+            for row in existing_rows:
+                existing_orders[row['id']] = row.get('sort_order', 0) or 0
+        except Exception:
+            pass
+
         # 清空旧数据并重新写入
         db_handler.execute("DELETE FROM scheduler_jobs")
 
         for job in scheduler.get_jobs():
             cron_expression = _extract_cron_expression(job.trigger)
+            job_id = job.id
+            sort_order = existing_orders.get(job_id, 0)
 
             db_handler.execute(
-                """INSERT INTO scheduler_jobs (id, name, project_name, module_name, case_index, cron_expression)
-                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                """INSERT INTO scheduler_jobs (id, name, project_name, module_name, case_index, cron_expression, sort_order)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
                 (
-                    job.id,
+                    job_id,
                     job.name,
                     job.args[0] if len(job.args) > 0 else '',
                     job.args[1] if len(job.args) > 1 else '',
                     job.args[2] if len(job.args) > 2 else 0,
-                    cron_expression
+                    cron_expression,
+                    sort_order
                 )
             )
 
@@ -539,7 +551,8 @@ def _load_scheduler_jobs():
 
     try:
         db_handler._ensure_connection()
-        jobs_data = db_handler.query("SELECT * FROM scheduler_jobs")
+
+        jobs_data = db_handler.query("SELECT * FROM scheduler_jobs ORDER BY sort_order, id")
 
         if not jobs_data:
             logger.info("数据库中没有定时任务数据")
@@ -1460,60 +1473,78 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
 def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None:
     """
     定时测试任务
+    按排序顺序依次执行同模块下所有定时任务接口，确保登录等前置接口先执行、token等变量先提取。
 
     Args:
         project_name: 项目名称
         module_name: 模块名称
-        api_id: 接口ID（数据库ID）
+        api_id: 触发任务的接口ID（数据库ID），用于标识是哪个job触发的
     """
-    # 获取项目级别的环境配置 - 直接从数据库获取最新数据，不使用缓存
-    projects_data_for_env = _get_projects_directly()
-    proj_env_name = ''
-    if project_name in projects_data_for_env:
-        proj_env_name = projects_data_for_env[project_name].get('current_env', '')
-    # logger.info(f"执行定时测试: {project_name}/{module_name}[{api_id}] (当前环境: {proj_env_name or '默认'})")
+    # 使用锁防止同模块的多个定时任务并发执行
+    _scheduler_module_lock_key = f"{project_name}__{module_name}"
+    if not hasattr(scheduled_test_job, '_module_locks'):
+        scheduled_test_job._module_locks = {}
+    if _scheduler_module_lock_key not in scheduled_test_job._module_locks:
+        import threading
+        scheduled_test_job._module_locks[_scheduler_module_lock_key] = threading.Lock()
 
-    # 从数据库中获取接口数据
-    api_data = None
+    lock = scheduled_test_job._module_locks[_scheduler_module_lock_key]
+    if not lock.acquire(blocking=False):
+        logger.info(f"[定时测试] 同模块任务正在执行，跳过: {project_name}/{module_name}[{api_id}]")
+        return
 
-    if project_name and module_name and api_id and db_handler:
-        try:
-            db_handler._ensure_connection()
-            # 查询项目ID
-            proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
-            if proj:
-                proj_id = proj[0]['id']
-                # 查询模块ID
-                mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
-                if mod:
-                    mod_id = mod[0]['id']
-                    # 查询接口
-                    api = db_handler.query("SELECT * FROM apis WHERE id = %s", (api_id,))
-                    if api:
-                        api_data = api[0]
-                        # 构造测试数据
-                        api_data = {
-                            'case_name': api_data.get('case_name', ''),
-                            'url': api_data.get('url', ''),
-                            'method': api_data.get('method', 'GET'),
-                            'headers': json.loads(api_data.get('headers', '{}')),
-                            'data': _unwrap_raw(json.loads(api_data.get('data', '{}'))),
-                            'expected': json.loads(api_data.get('expected', '{}')),
-                            'extractions': json.loads(api_data.get('extractions', '{}')),
-                            'project': project_name,
-                            'module': module_name,
-                            'source': '定时',
-                            'task_id': f"{project_name}_{module_name}_{api_id}_{int(time.time())}"
-                        }
-        except Exception as e:
-            logger.error(f"定时测试获取接口数据失败: {e}", exc_info=True)
+    try:
+        # 获取项目级别的环境配置 - 直接从数据库获取最新数据，不使用缓存
+        projects_data_for_env = _get_projects_directly()
+        proj_env_name = ''
+        if project_name in projects_data_for_env:
+            proj_env_name = projects_data_for_env[project_name].get('current_env', '')
 
-    if api_data:
-        # 变量替换和提取均在execute_api_test内部完成，每次执行前从数据库读取最新变量
-        result = execute_api_test(api_data)
-        # logger.info(f"定时测试结果: {project_name}/{module_name}[{api_id}] - {json.dumps(result, ensure_ascii=False)}")
-    else:
-        logger.error(f"定时测试失败: 未找到接口数据 - {project_name}/{module_name}[{api_id}]")
+        # ====== 按排序顺序执行同模块下所有定时任务接口 ======
+        if project_name and module_name and db_handler:
+            try:
+                db_handler._ensure_connection()
+                proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
+                if proj:
+                    proj_id = proj[0]['id']
+                    mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
+                    if mod:
+                        mod_id = mod[0]['id']
+                        # 查询同模块下所有定时任务接口，按sort_order排序
+                        scheduled_apis = db_handler.query(
+                            """SELECT a.*, sj.sort_order FROM apis a
+                               INNER JOIN scheduler_jobs sj ON sj.case_index = a.id AND sj.project_name = %s AND sj.module_name = %s
+                               WHERE a.module_id = %s
+                               ORDER BY sj.sort_order, a.id""",
+                            (project_name, module_name, mod_id)
+                        )
+                        if scheduled_apis:
+                            for api_row in scheduled_apis:
+                                # 构造测试数据并执行
+                                api_data = {
+                                    'case_name': api_row.get('case_name', ''),
+                                    'url': api_row.get('url', ''),
+                                    'method': api_row.get('method', 'GET'),
+                                    'headers': json.loads(api_row.get('headers', '{}')),
+                                    'data': _unwrap_raw(json.loads(api_row.get('data', '{}'))),
+                                    'expected': json.loads(api_row.get('expected', '{}')),
+                                    'extractions': json.loads(api_row.get('extractions', '{}')),
+                                    'project': project_name,
+                                    'module': module_name,
+                                    'source': '定时',
+                                    'task_id': f"{project_name}_{module_name}_{api_row['id']}_{int(time.time())}"
+                                }
+                                try:
+                                    result = execute_api_test(api_data)
+                                    logger.info(f"[定时测试] 执行接口 {api_row.get('case_name', '')} (id={api_row['id']}) 完成, 成功={result.get('success')}")
+                                except Exception as e:
+                                    logger.warning(f"[定时测试] 执行接口 {api_row.get('case_name', '')} (id={api_row['id']}) 失败: {e}")
+            except Exception as e:
+                logger.error(f"定时测试执行失败: {e}", exc_info=True)
+        else:
+            logger.error(f"定时测试失败: 参数不完整 - {project_name}/{module_name}[{api_id}]")
+    finally:
+        lock.release()
 
 
 # 设备检测函数
@@ -2480,6 +2511,17 @@ def api_debug():
 def scheduler_list():
 
     """定时任务列表"""
+    # 从数据库读取排序信息
+    db_sort_orders = {}
+    if db_handler:
+        try:
+            db_handler._ensure_connection()
+            sort_rows = db_handler.query("SELECT id, sort_order FROM scheduler_jobs")
+            for row in sort_rows:
+                db_sort_orders[row['id']] = row.get('sort_order', 0) or 0
+        except Exception:
+            pass
+
     jobs = []
     for job in scheduler.get_jobs():
         # 从job.args中提取参数
@@ -2490,6 +2532,8 @@ def scheduler_list():
         # 从trigger中提取cron表达式
         cron_expression = _extract_cron_expression(job.trigger)
 
+        sort_order = db_sort_orders.get(job.id, 0)
+
         jobs.append({
             'id': job.id,
             'name': job.name,
@@ -2498,8 +2542,13 @@ def scheduler_list():
             'project_name': project_name,
             'module_name': module_name,
             'api_id': api_id,
-            'cron_expression': cron_expression
+            'cron_expression': cron_expression,
+            'sort_order': sort_order
         })
+
+    # 按 sort_order 排序，sort_order 相同的按 id 排序
+    jobs.sort(key=lambda x: (x['sort_order'], x['id']))
+
     return jsonify(jobs)
 
 
@@ -2552,6 +2601,19 @@ def scheduler_add():
         # 创建任务ID
         job_id = f"{project_name}_{module_name}_{api_id}_{int(time.time())}"
 
+        # 计算新任务的排序值（当前模块最大sort_order + 1）
+        new_sort_order = 0
+        if db_handler:
+            try:
+                max_sort = db_handler.query(
+                    "SELECT MAX(sort_order) as max_sort FROM scheduler_jobs WHERE project_name = %s AND module_name = %s",
+                    (project_name, module_name)
+                )
+                if max_sort and max_sort[0].get('max_sort') is not None:
+                    new_sort_order = max_sort[0]['max_sort'] + 1
+            except Exception:
+                pass
+
         # 添加定时任务
         scheduler.add_job(
             func=scheduled_test_job,
@@ -2561,8 +2623,14 @@ def scheduler_add():
             name=f"{project_name}/{module_name} - {api_data.get('case_name', '未命名')}"
         )
 
-        # 持久化定时任务
+        # 持久化定时任务（先手动插入含sort_order的记录，避免_save丢失排序）
         _save_scheduler_jobs()
+        # 更新新任务的sort_order
+        if db_handler:
+            try:
+                db_handler.execute("UPDATE scheduler_jobs SET sort_order = %s WHERE id = %s", (new_sort_order, job_id))
+            except Exception:
+                pass
 
         return jsonify({'success': True, 'message': '定时任务添加成功'})
     except ValueError as e:
@@ -2633,6 +2701,79 @@ def scheduler_delete(job_id):
     except Exception as e:
         logger.error(f"删除定时任务失败: {e}")
         return jsonify({'success': False, 'error': f'删除定时任务失败: {str(e)}'})
+
+
+# 路由：定时任务排序移动
+@app.route('/scheduler/move', methods=['POST'])
+def scheduler_move():
+    """移动定时任务排序（上移/下移）"""
+    try:
+        job_id = request.form.get('job_id')
+        direction = request.form.get('direction')  # 'up' 或 'down'
+
+        if not job_id or direction not in ('up', 'down'):
+            return jsonify({'success': False, 'message': '参数错误'}), 400
+
+        if not db_handler:
+            return jsonify({'success': False, 'message': '数据库未连接'}), 500
+
+        db_handler._ensure_connection()
+
+        # 获取当前job的排序和所属模块
+        current_job = db_handler.query("SELECT sort_order, project_name, module_name FROM scheduler_jobs WHERE id = %s", (job_id,))
+        if not current_job:
+            return jsonify({'success': False, 'message': '任务不存在'}), 404
+
+        current_sort = current_job[0].get('sort_order', 0) or 0
+        project_name = current_job[0]['project_name']
+        module_name = current_job[0]['module_name']
+
+        # 获取同模块下所有任务，按sort_order排序
+        module_jobs = db_handler.query(
+            "SELECT id, sort_order FROM scheduler_jobs WHERE project_name = %s AND module_name = %s ORDER BY sort_order, id",
+            (project_name, module_name)
+        )
+
+        if len(module_jobs) <= 1:
+            return jsonify({'success': True, 'message': '只有一个任务，无需移动'})
+
+        # 重新分配连续的sort_order（避免排序值不连续）
+        for i, mj in enumerate(module_jobs):
+            if mj['sort_order'] != i:
+                db_handler.execute("UPDATE scheduler_jobs SET sort_order = %s WHERE id = %s", (i, mj['id']))
+
+        # 重新获取排序后的列表
+        module_jobs = db_handler.query(
+            "SELECT id, sort_order FROM scheduler_jobs WHERE project_name = %s AND module_name = %s ORDER BY sort_order, id",
+            (project_name, module_name)
+        )
+
+        # 找到当前job在列表中的索引
+        current_index = -1
+        for i, mj in enumerate(module_jobs):
+            if mj['id'] == job_id:
+                current_index = i
+                break
+
+        if direction == 'up' and current_index <= 0:
+            return jsonify({'success': True, 'message': '已经在最前面'})
+        if direction == 'down' and current_index >= len(module_jobs) - 1:
+            return jsonify({'success': True, 'message': '已经在最后面'})
+
+        # 交换当前job和目标job的sort_order
+        swap_index = current_index - 1 if direction == 'up' else current_index + 1
+        swap_job_id = module_jobs[swap_index]['id']
+
+        db_handler.execute("UPDATE scheduler_jobs SET sort_order = %s WHERE id = %s", (swap_index, job_id))
+        db_handler.execute("UPDATE scheduler_jobs SET sort_order = %s WHERE id = %s", (current_index, swap_job_id))
+
+        # 清除缓存
+        scheduler_cache.clear()
+
+        return jsonify({'success': True, 'message': '移动成功'})
+    except Exception as e:
+        logger.error(f"移动定时任务排序失败: {e}")
+        return jsonify({'success': False, 'message': f'移动失败: {str(e)}'}), 500
 
 
 # 路由：获取统计页面的项目列表
@@ -3341,8 +3482,14 @@ def test_execute_module(project_name, module_name):
                 mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
                 if mod:
                     mod_id = mod[0]['id']
-                    # 查询模块下的所有接口
-                    api_list = db_handler.query("SELECT * FROM apis WHERE module_id = %s ORDER BY id", (mod_id,))
+                    # 查询模块下的所有接口，按定时任务排序顺序执行
+                    api_list = db_handler.query(
+                        """SELECT a.* FROM apis a
+                           LEFT JOIN scheduler_jobs sj ON sj.case_index = a.id AND sj.project_name = %s AND sj.module_name = %s
+                           WHERE a.module_id = %s
+                           ORDER BY COALESCE(sj.sort_order, 999), a.id""",
+                        (project_name, module_name, mod_id)
+                    )
                     if api_list:
                         for api in api_list:
                             # 构造测试数据，与定时任务的处理方式一致

@@ -1111,13 +1111,16 @@ function loadSchedulerJobsByModule(projectName, moduleName) {
                 <div class="empty-state-desc">该模块下还没有配置定时任务</div>
             </div>`;
         } else {
-            html += '<div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead class="table-light"><tr><th>任务名称</th><th>下次执行时间</th><th>Cron表达式</th><th style="width:140px;">操作</th></tr></thead><tbody>';
-            filtered.forEach(job => {
+            html += '<div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead class="table-light"><tr><th style="width:50px;">序号</th><th>任务名称</th><th>下次执行时间</th><th>Cron表达式</th><th style="width:200px;">操作</th></tr></thead><tbody>';
+            filtered.forEach((job, index) => {
                 html += `<tr>
+                    <td class="text-center text-muted">${index + 1}</td>
                     <td>${escapeHtml(job.name)}</td>
                     <td>${job.next_run_time || '未知'}</td>
                     <td><code>${escapeHtml(job.cron_expression || job.trigger)}</code><br><small class="text-muted">${formatCronExpression(job.cron_expression || job.trigger)}</small></td>
                     <td>
+                        <button class="btn btn-sm btn-outline-secondary me-1" onclick="moveScheduler('${job.id}','up')" title="上移" ${index === 0 ? 'disabled' : ''}><i class="bi bi-arrow-up"></i></button>
+                        <button class="btn btn-sm btn-outline-secondary me-1" onclick="moveScheduler('${job.id}','down')" title="下移" ${index === filtered.length - 1 ? 'disabled' : ''}><i class="bi bi-arrow-down"></i></button>
                         <button class="btn btn-sm btn-warning me-1" onclick="editScheduler('${job.id}','${escapeHtml(job.project_name)}','${escapeHtml(job.module_name)}',${job.api_id},'${escapeHtml(job.cron_expression)}')" title="编辑"><i class="bi bi-pencil"></i></button>
                         <button class="btn btn-sm btn-danger" onclick="deleteScheduler('${job.id}')" title="删除"><i class="bi bi-trash"></i></button>
                     </td>
@@ -1331,6 +1334,32 @@ function updateScheduler() {
     })
     .catch(error => {
         showToast('错误', '更新定时任务失败: ' + error.message, 'danger');
+    });
+}
+
+/**
+ * 移动定时任务排序（上移/下移）
+ * @param {string} jobId - 任务ID
+ * @param {string} direction - 移动方向 'up' 或 'down'
+ */
+function moveScheduler(jobId, direction) {
+    const formData = new FormData();
+    formData.append('job_id', jobId);
+    formData.append('direction', direction);
+    fetch('/scheduler/move', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            loadSchedulerList();
+        } else {
+            showToast('错误', result.message || '移动失败', 'danger');
+        }
+    })
+    .catch(error => {
+        showToast('错误', '移动失败: ' + error.message, 'danger');
     });
 }
 
