@@ -12,7 +12,7 @@ env:
 
 # 日志配置
 log:
-  level: WARNING             # 日志级别: DEBUG / INFO / WARNING / ERROR
+  level: INFO             # 日志级别: DEBUG / INFO / WARNING / ERROR
   rotation: "10 MB"       # 单个日志文件大小，超过后自动轮转
   retention: "30 days"    # 日志文件保留时间
   encoding: utf-8         # 日志文件编码

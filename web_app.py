@@ -267,6 +267,24 @@ try:
     except Exception as migrate_err:
         logger.warning(f"自动迁移projects表失败（新数据库无需迁移）: {migrate_err}")
 
+    # 自动迁移：创建domain_links表（如果不存在）
+    try:
+        tables = db_handler.query("SHOW TABLES LIKE 'domain_links'")
+        if not tables:
+            db_handler.execute("""
+                CREATE TABLE domain_links (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    url VARCHAR(255) NOT NULL COMMENT '域名链接',
+                    tunnel_name VARCHAR(100) DEFAULT '' COMMENT '隧道名称',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                    INDEX idx_url (url),
+                    INDEX idx_created_at (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='域名链接表'
+            """)
+            logger.info("自动迁移：已创建domain_links表")
+    except Exception as migrate_err:
+        logger.warning(f"自动迁移domain_links表失败: {migrate_err}")
+
     # 启动时预加载统计数据
     try:
         # logger.info("=" * 50)
@@ -522,7 +540,8 @@ def _extract_cron_expression(trigger):
         for field_name in ['minute', 'hour', 'day', 'month', 'day_of_week']:
             field = getattr(trigger.fields, field_name, None)
             if field is not None:
-                cron_parts.append(str(field))
+                # 获取字段的表达式字符串
+                cron_parts.append(str(field.expressions[0]) if hasattr(field, 'expressions') and field.expressions else '*')
         if cron_parts and len(cron_parts) == 5:
             return ' '.join(cron_parts)
 
@@ -604,9 +623,154 @@ def _load_scheduler_jobs():
         logger.error(f"加载定时任务配置失败: {e}", exc_info=True)
 
 
+def fetch_and_send_domain_links():
+    """
+    定时任务：每30分钟获取域名链接并发送邮件
+    """
+    try:
+        logger.info("[域名获取] 开始执行域名获取任务")
+
+        # 导入域名获取模块
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from 域名获取 import fetch_info_from_website
+
+        # 登录信息
+        login_url = "https://dashboard.cpolar.com/login"
+        info_url = "https://dashboard.cpolar.com/status"
+        credentials = {
+            'login': '941433717@qq.com',
+            'password': 'k941433717',
+        }
+        tunnel_name = 'api自动化平台'
+
+        # 获取域名链接
+        links = fetch_info_from_website(login_url, info_url, credentials, tunnel_name)
+
+        if links:
+            logger.info(f"[域名获取] 成功获取到 {len(links)} 个链接")
+
+            # 检查数据库中是否已存在域名记录
+            if db_handler:
+                try:
+                    db_handler._ensure_connection()
+
+                    # 查询数据库中已有的域名
+                    existing_domains = db_handler.query("SELECT id, url FROM domain_links ORDER BY id DESC LIMIT 10")
+                    existing_urls = set(domain['url'] for domain in existing_domains) if existing_domains else set()
+
+                    # 检查是否有新的域名
+                    new_links = [link for link in links if link not in existing_urls]
+
+                    if new_links:
+                        logger.info(f"[域名获取] 发现 {len(new_links)} 个新域名，需要更新")
+
+                        # 保存新域名到数据库
+                        for link in new_links:
+                            db_handler.execute(
+                                "INSERT INTO domain_links (url, tunnel_name, created_at) VALUES (%s, %s, NOW())",
+                                (link, tunnel_name)
+                            )
+                        logger.info(f"[域名获取] 已保存 {len(new_links)} 个新域名到数据库")
+
+                        # 构建邮件内容
+                        email_content = f"""
+                        <html>
+                        <head>
+                            <style>
+                                body {{ font-family: Arial, sans-serif; line-height: 1.6; }}
+                                .container {{ max-width: 800px; margin: 0 auto; padding: 20px; }}
+                                .header {{ background-color: #4CAF50; color: white; padding: 15px; text-align: center; }}
+                                .content {{ padding: 20px; background-color: #f9f9f9; }}
+                                .info {{ margin-bottom: 15px; }}
+                                .label {{ font-weight: bold; }}
+                                table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+                                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                                th {{ background-color: #f2f2f2; }}
+                            </style>
+                        </head>
+                        <body>
+                            <div class="container">
+                                <div class="header">
+                                    <h2>🔗 域名链接更新通知</h2>
+                                </div>
+                                <div class="content">
+                                    <div class="info">
+                                        <span class="label">隧道名称：</span>{tunnel_name}
+                                    </div>
+                                    <div class="info">
+                                        <span class="label">更新时间：</span>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                                    </div>
+                                    <h3>新获取的链接：</h3>
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>序号</th>
+                                                <th>链接</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                        """
+
+                        # 添加链接到邮件内容
+                        for i, link in enumerate(new_links, 1):
+                            email_content += f"""
+                                            <tr>
+                                                <td>{i}</td>
+                                                <td><a href="{link}">{link}</a></td>
+                                            </tr>
+                        """
+
+                        email_content += """
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </body>
+                        </html>
+                        """
+
+                        # 发送邮件
+                        subject = f"🔗 域名链接更新通知 - {tunnel_name}"
+                        email_handler.send_email(['941433717@qq.com'], subject, email_content, 'html')
+                        logger.info("[域名获取] 邮件发送成功")
+                    else:
+                        logger.info("[域名获取] 域名未发生变化，忽略本次更新")
+
+                except Exception as db_err:
+                    logger.error(f"[域名获取] 数据库操作失败: {db_err}", exc_info=True)
+            else:
+                logger.warning("[域名获取] 数据库连接不可用，无法保存域名")
+        else:
+            logger.warning("[域名获取] 未获取到任何链接")
+
+    except Exception as e:
+        logger.error(f"[域名获取] 执行失败: {e}", exc_info=True)
+
+
 # 定时任务调度器
 scheduler = BackgroundScheduler()
 scheduler.start()
+
+# 添加域名获取定时任务（默认每30分钟执行一次，可通过修改cron_expression调整）
+try:
+    # 可选的cron表达式配置：
+    # - '*/30 * * * *' 每30分钟执行一次
+    # - '0 * * * *' 每小时执行一次
+    # - '0 */6 * * *' 每6小时执行一次
+    # - '0 0 * * *' 每天执行一次
+    cron_expression = '*/30 * * * *'  # 默认每30分钟执行一次
+
+    scheduler.add_job(
+        func=fetch_and_send_domain_links,
+        trigger=CronTrigger.from_crontab(cron_expression),
+        id='domain_links_fetch',
+        name='域名链接获取任务'
+    )
+    logger.info(f"[域名获取] 已添加域名获取定时任务（cron表达式: {cron_expression}）")
+except Exception as e:
+    logger.error(f"[域名获取] 添加定时任务失败: {e}", exc_info=True)
 
 
 def _check_db_available() -> bool:
@@ -1497,7 +1661,7 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
 def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None:
     """
     定时测试任务
-    执行指定模块中所有需要执行的接口（按顺序执行）
+    当APScheduler触发时，直接执行指定的接口，同时检查同模块下其他需要执行的接口
 
     Args:
         project_name: 项目名称
@@ -1540,7 +1704,7 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
                     if mod:
                         mod_id = mod[0]['id']
 
-                        # 获取当前时间，判断哪些接口需要执行
+                        # 获取当前时间
                         current_time = datetime.now().astimezone()
                         logger.info(f"[定时测试] 当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -1571,30 +1735,38 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
                                     'sort_order': job_data.get('sort_order', 0)
                                 })
 
-
-
                         if not module_jobs:
                             logger.info(f"[定时测试] 模块 {module_name} 下没有定时任务")
                             return
 
                         # 按sort_order排序，确保按顺序执行
                         module_jobs.sort(key=lambda x: x['sort_order'])
-                        logger.info(f"[定时测试] 模块 {module_name} 下有 {len(module_jobs)} 个定时任务需要执行")
+                        logger.info(f"[定时测试] 模块 {module_name} 下有 {len(module_jobs)} 个定时任务")
 
-                        # 检查哪些任务应该在当前时间执行（允许1分钟的误差）
+                        # 确定需要执行的接口列表
+                        # APScheduler触发任务时，next_run_time已经被更新为下一次执行时间
+                        # 所以不能依赖next_run_time来判断是否需要执行
+                        # 策略：被触发的接口一定执行，同模块下其他接口检查是否也应该在当前时间执行
                         jobs_to_execute = []
+
                         for job_info in module_jobs:
+                            # 被APScheduler触发的接口，一定执行
+                            if job_info['api_id'] == api_id:
+                                jobs_to_execute.append(job_info['api_id'])
+                                logger.info(f"[定时测试] 接口 {job_info['api_id']} 被APScheduler触发，需要执行")
+                                continue
+
+                            # 同模块下其他接口：检查是否也应该在当前时间执行
+                            # 允许60秒误差，因为APScheduler可能有轻微的调度延迟
                             if job_info['next_run_time']:
-                                logger.info(f"[定时测试] 检查接口 {job_info['api_id']}: next_run_time={job_info['next_run_time']}, type={type(job_info['next_run_time'])}")
-                                logger.info(f"[定时测试] 检查接口 {job_info['api_id']}: current_time={current_time}, type={type(current_time)}")
                                 try:
                                     time_diff = abs((current_time - job_info['next_run_time']).total_seconds())
-                                    logger.info(f"[定时测试] 接口 {job_info['api_id']} 时间差: {time_diff}秒")
-                                    if time_diff <= 60:  # 允许1分钟的误差
+                                    logger.info(f"[定时测试] 检查接口 {job_info['api_id']}: next_run_time={job_info['next_run_time']}, 时间差: {time_diff}秒")
+                                    if time_diff <= 60:
                                         jobs_to_execute.append(job_info['api_id'])
-                                        logger.info(f"[定时测试] 接口 {job_info['api_id']} 需要执行 (下次执行时间: {job_info['next_run_time'].strftime('%Y-%m-%d %H:%M:%S')})")
+                                        logger.info(f"[定时测试] 接口 {job_info['api_id']} 在当前时间窗口内，需要执行")
                                 except Exception as e:
-                                    logger.error(f"[定时测试] 计算时间差失败: {e}, current_time={current_time}, next_run_time={job_info['next_run_time']}")
+                                    logger.error(f"[定时测试] 计算时间差失败: {e}")
 
                         if not jobs_to_execute:
                             logger.info(f"[定时测试] 当前时间没有需要执行的接口")
@@ -2829,6 +3001,7 @@ def scheduler_update():
         scheduler.remove_job(job_id)
 
         # 创建新任务（使用原job_id）
+        # next_run_time由APScheduler根据cron表达式自动计算
         scheduler.add_job(
             func=scheduled_test_job,
             trigger=CronTrigger.from_crontab(cron_expression),
@@ -3332,6 +3505,19 @@ def statistics_export():
         as_attachment=True,
         download_name=filename
     )
+
+
+# 路由：获取域名链接并发送邮件
+@app.route('/domain/fetch-and-send')
+def domain_fetch_and_send():
+    """获取域名链接并发送邮件"""
+    try:
+        # 调用获取域名链接并发送邮件的函数
+        fetch_and_send_domain_links()
+        return jsonify({'success': True, 'message': '域名链接已获取并发送邮件'})
+    except Exception as e:
+        logger.error(f"获取域名链接并发送邮件失败: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': str(e)})
 
 
 # 路由：获取单条统计详情

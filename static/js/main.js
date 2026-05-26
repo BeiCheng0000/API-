@@ -107,6 +107,60 @@ function toggleSidebar() {
     }
 }
 
+// 域名链接点击计数器
+let domainLinkClickCount = 0;
+let domainLinkClickTimer = null;
+
+/**
+ * 处理域名链接按钮点击事件
+ * 点击三次后执行获取域名链接并发送邮件
+ */
+function handleDomainLinkClick() {
+    domainLinkClickCount++;
+    
+    // 清除之前的定时器
+    if (domainLinkClickTimer) {
+        clearTimeout(domainLinkClickTimer);
+    }
+    
+    // 如果点击次数达到3次，执行获取域名链接并发送邮件
+    if (domainLinkClickCount >= 3) {
+        domainLinkClickCount = 0;
+        fetchDomainLinksAndSendEmail();
+        return;
+    }
+    
+    // 显示提示信息
+    const remainingClicks = 3 - domainLinkClickCount;
+    showToast('提示', `再点击 ${remainingClicks} 次将获取最新域名并发送邮件`);
+    
+    // 5秒后重置点击计数器
+    domainLinkClickTimer = setTimeout(() => {
+        domainLinkClickCount = 0;
+    }, 5000);
+}
+
+/**
+ * 获取域名链接并发送邮件
+ */
+function fetchDomainLinksAndSendEmail() {
+    showToast('提示', '正在获取域名链接...');
+    
+    fetch('/domain/fetch-and-send')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('成功', data.message || '域名链接已获取并发送邮件');
+            } else {
+                showToast('错误', data.message || '获取域名链接失败');
+            }
+        })
+        .catch(error => {
+            console.error('获取域名链接失败:', error);
+            showToast('错误', '获取域名链接失败: ' + error.message);
+        });
+}
+
 // 页面加载完成后执行
 document.addEventListener('DOMContentLoaded', function() {
     // 加载顶部统计数据
