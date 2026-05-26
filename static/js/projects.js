@@ -154,6 +154,8 @@ function loadProjectsList(forceRefresh = false) {
                 const moduleCount = Object.keys(modules).length;
                 const safeName = escapeHtml(projectName);
                 const safeDesc = escapeHtml(projectData.description || '');
+                const alertEnabled = projectData.alert_enabled || '0';
+                const alertEmail = escapeHtml(projectData.alert_email || '');
                 const isExpanded = _expandedProjects.has(projectName);
 
                 // 构建子内容HTML
@@ -201,7 +203,7 @@ function loadProjectsList(forceRefresh = false) {
                             <div class="tree-project-name">${safeName}</div>
                         </div>
                         <div class="tree-project-actions">
-                            <button class="btn btn-icon btn-icon-sm btn-soft-warning" data-project="${safeName}" data-desc="${safeDesc}" onclick="event.stopPropagation(); showEditProjectModal(this.dataset.project, this.dataset.desc)" title="编辑项目"><i class="bi bi-pencil"></i></button>
+                            <button class="btn btn-icon btn-icon-sm btn-soft-warning" data-project="${safeName}" data-desc="${safeDesc}" data-alert-enabled="${alertEnabled}" data-alert-email="${alertEmail}" onclick="event.stopPropagation(); showEditProjectModal(this.dataset.project, this.dataset.desc, this.dataset.alertEnabled, this.dataset.alertEmail)" title="编辑项目"><i class="bi bi-pencil"></i></button>
                             <button class="btn btn-icon btn-icon-sm btn-soft-primary" data-project="${safeName}" onclick="event.stopPropagation(); showAddModuleModal(this.dataset.project)" title="添加模块"><i class="bi bi-plus-lg"></i></button>
                             <button class="btn btn-icon btn-icon-sm btn-soft-info" data-project="${safeName}" onclick="event.stopPropagation(); showProjectEnvModal(this.dataset.project)" title="环境配置"><i class="bi bi-globe2"></i></button>
                             <button class="btn btn-icon btn-icon-sm btn-soft-secondary" data-project="${safeName}" onclick="event.stopPropagation(); showProjectVarModal(this.dataset.project)" title="变量管理"><i class="bi bi-braces"></i></button>
@@ -290,8 +292,22 @@ function refreshProjectsList(activeProject) {
 function showAddProjectModal() {
     const modal = new bootstrap.Modal(document.getElementById('addProjectModal'));
     document.getElementById('addProjectForm').reset();
+    // 默认不启用报警，隐藏邮箱输入框
+    document.getElementById('projectAlertEnabled').checked = false;
+    document.getElementById('projectAlertEmailGroup').style.display = 'none';
     modal.show();
 }
+
+// 邮箱报警开关联动效果
+document.getElementById('projectAlertEnabled').addEventListener('change', function() {
+    const emailGroup = document.getElementById('projectAlertEmailGroup');
+    emailGroup.style.display = this.checked ? 'block' : 'none';
+});
+
+document.getElementById('editProjectAlertEnabled').addEventListener('change', function() {
+    const emailGroup = document.getElementById('editProjectAlertEmailGroup');
+    emailGroup.style.display = this.checked ? 'block' : 'none';
+});
 
 /**
  * 添加项目
@@ -299,15 +315,25 @@ function showAddProjectModal() {
 function addProject() {
     const projectName = document.getElementById('projectName').value.trim();
     const projectDesc = document.getElementById('projectDesc').value.trim();
+    const alertEnabled = document.getElementById('projectAlertEnabled').checked ? 1 : 0;
+    const alertEmail = document.getElementById('projectAlertEmail').value.trim();
 
     if (!projectName) {
         showToast('错误', '项目名称不能为空', 'danger');
         return;
     }
 
+    // 如果启用报警，必须填写邮箱
+    if (alertEnabled && !alertEmail) {
+        showToast('错误', '启用报警时必须填写报警邮箱', 'danger');
+        return;
+    }
+
     const formData = new FormData();
     formData.append('project_name', projectName);
     formData.append('project_desc', projectDesc);
+    formData.append('alert_enabled', alertEnabled);
+    formData.append('alert_email', alertEmail);
 
     fetch('/projects/add', {
         method: 'POST',
@@ -360,11 +386,17 @@ function deleteProject(projectName) {
  * 显示编辑项目模态框
  * @param {string} projectName - 项目名称
  * @param {string} projectDesc - 项目描述
+ * @param {string} alertEnabled - 是否启用报警
+ * @param {string} alertEmail - 报警邮箱
  */
-function showEditProjectModal(projectName, projectDesc) {
+function showEditProjectModal(projectName, projectDesc, alertEnabled, alertEmail) {
     document.getElementById('editProjectOldName').value = projectName;
     document.getElementById('editProjectName').value = projectName;
     document.getElementById('editProjectDesc').value = projectDesc;
+    document.getElementById('editProjectAlertEnabled').checked = alertEnabled === '1';
+    document.getElementById('editProjectAlertEmail').value = alertEmail || '';
+    // 根据报警开关显示/隐藏邮箱输入框
+    document.getElementById('editProjectAlertEmailGroup').style.display = alertEnabled === '1' ? 'block' : 'none';
     const modal = new bootstrap.Modal(document.getElementById('editProjectModal'));
     modal.show();
 }
@@ -376,9 +408,17 @@ function updateProject() {
     const oldName = document.getElementById('editProjectOldName').value;
     const projectName = document.getElementById('editProjectName').value.trim();
     const projectDesc = document.getElementById('editProjectDesc').value.trim();
+    const alertEnabled = document.getElementById('editProjectAlertEnabled').checked ? 1 : 0;
+    const alertEmail = document.getElementById('editProjectAlertEmail').value.trim();
 
     if (!projectName) {
         showToast('错误', '项目名称不能为空', 'danger');
+        return;
+    }
+
+    // 如果启用报警，必须填写邮箱
+    if (alertEnabled && !alertEmail) {
+        showToast('错误', '启用报警时必须填写报警邮箱', 'danger');
         return;
     }
 
@@ -386,6 +426,8 @@ function updateProject() {
     formData.append('old_name', oldName);
     formData.append('project_name', projectName);
     formData.append('project_desc', projectDesc);
+    formData.append('alert_enabled', alertEnabled);
+    formData.append('alert_email', alertEmail);
 
     fetch('/projects/update', {
         method: 'POST',

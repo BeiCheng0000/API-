@@ -108,6 +108,7 @@ from common.yaml_handler import YamlHandler
 from common.logger_handler import logger
 from common.config_handler import env_config
 from common.db_handler import MySQLHandler
+from common.email_handler import email_handler
 from utils.cache_bypass_new import _get_projects_directly
 from utils.session_manager import session_manager
 from utils.get_projects_fixed_new import get_projects as get_projects_fixed
@@ -1623,6 +1624,32 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
                             try:
                                 result = execute_api_test(api_data)
                                 logger.info(f"[定时测试] 执行接口 {api_row.get('case_name', '')} (id={api_row['id']}) 完成, 成功={result.get('success')}")
+
+                                # 检查断言是否失败，如果失败且项目配置了邮箱报警，则发送报警邮件
+                                if not result.get('assertion_passed', True):
+                                    logger.warning(f"[定时测试] 接口 {api_row.get('case_name', '')} 断言失败")
+                                    # 查询项目的邮箱报警配置
+                                    proj_alert = db_handler.query(
+                                        "SELECT alert_enabled, alert_email FROM projects WHERE name = %s",
+                                        (project_name,)
+                                    )
+                                    if proj_alert and proj_alert[0].get('alert_enabled') == 1 and proj_alert[0].get('alert_email'):
+                                        alert_email = proj_alert[0].get('alert_email')
+                                        logger.info(f"[定时测试] 发送报警邮件到: {alert_email}")
+                                        # 发送报警邮件
+                                        try:
+                                            email_handler.send_alert_email(
+                                                to_email=alert_email,
+                                                project_name=project_name,
+                                                module_name=module_name,
+                                                case_name=api_row.get('case_name', ''),
+                                                result=result
+                                            )
+                                            logger.info(f"[定时测试] 报警邮件发送成功")
+                                        except Exception as e:
+                                            logger.error(f"[定时测试] 报警邮件发送失败: {e}", exc_info=True)
+                                    else:
+                                        logger.info(f"[定时测试] 项目未配置邮箱报警，跳过发送邮件")
                             except Exception as e:
                                 logger.warning(f"[定时测试] 执行接口 {api_row.get('case_name', '')} (id={api_row['id']}) 失败: {e}")
                     else:
@@ -1729,9 +1756,11 @@ def project_add():
     """添加项目"""
     project_name = request.form.get('project_name', '').strip()
     project_desc = request.form.get('project_desc', '').strip()
+    alert_enabled = request.form.get('alert_enabled', '0').strip()
+    alert_email = request.form.get('alert_email', '').strip()
 
     logger.info(f"========== 开始添加项目 ==========")
-    logger.info(f"项目名称: {project_name}, 描述: {project_desc}")
+    logger.info(f"项目名称: {project_name}, 描述: {project_desc}, 报警启用: {alert_enabled}, 报警邮箱: {alert_email}")
 
     if not project_name:
         return jsonify({'success': False, 'error': '项目名称不能为空'})
@@ -1751,8 +1780,8 @@ def project_add():
 
         # 添加项目
         db_handler.execute(
-            "INSERT INTO projects (name, description) VALUES (%s, %s)",
-            (project_name, project_desc)
+            "INSERT INTO projects (name, description, alert_enabled, alert_email) VALUES (%s, %s, %s, %s)",
+            (project_name, project_desc, alert_enabled, alert_email)
         )
         logger.info("项目添加成功")
 
@@ -1816,9 +1845,11 @@ def project_update():
     old_name = request.form.get('old_name', '').strip()
     project_name = request.form.get('project_name', '').strip()
     project_desc = request.form.get('project_desc', '').strip()
+    alert_enabled = request.form.get('alert_enabled', '0').strip()
+    alert_email = request.form.get('alert_email', '').strip()
 
     logger.info(f"========== 开始更新项目 ==========")
-    logger.info(f"旧项目名称: {old_name}, 新项目名称: {project_name}, 描述: {project_desc}")
+    logger.info(f"旧项目名称: {old_name}, 新项目名称: {project_name}, 描述: {project_desc}, 报警启用: {alert_enabled}, 报警邮箱: {alert_email}")
 
     if not project_name:
         return jsonify({'success': False, 'error': '项目名称不能为空'})
@@ -1846,8 +1877,8 @@ def project_update():
 
         # 更新项目
         db_handler.execute(
-            "UPDATE projects SET name = %s, description = %s WHERE id = %s",
-            (project_name, project_desc, proj_id)
+            "UPDATE projects SET name = %s, description = %s, alert_enabled = %s, alert_email = %s WHERE id = %s",
+            (project_name, project_desc, alert_enabled, alert_email, proj_id)
         )
         logger.info("项目更新成功")
 
@@ -1922,6 +1953,8 @@ def projects_list():
                 'id': proj['id'],
                 'name': proj['name'],
                 'description': proj['description'],
+                'alert_enabled': proj.get('alert_enabled', 0),
+                'alert_email': proj.get('alert_email', ''),
                 'modules': modules_data
             }
 

@@ -157,6 +157,17 @@ class DatabaseInitializer:
             self.db_handler.execute("ALTER TABLE projects ADD COLUMN `current_env` VARCHAR(255) DEFAULT '' COMMENT '当前激活的环境名称'")
         except Exception:
             pass  # 字段已存在
+
+        # 兼容已有数据库，添加邮箱报警相关字段
+        try:
+            self.db_handler.execute("ALTER TABLE projects ADD COLUMN `alert_enabled` TINYINT(1) DEFAULT 0 COMMENT '是否启用报警：0-不启用，1-启用'")
+        except Exception:
+            pass  # 字段已存在
+        try:
+            self.db_handler.execute("ALTER TABLE projects ADD COLUMN `alert_email` VARCHAR(255) DEFAULT '' COMMENT '报警邮箱地址'")
+        except Exception:
+            pass  # 字段已存在
+
         logger.info("项目表创建成功")
 
     def create_modules_table(self):

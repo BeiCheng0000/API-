@@ -9,6 +9,24 @@ import os
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# 加载.env文件（仅当系统环境变量不存在时才从.env文件读取）
+from dotenv import load_dotenv
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+# 手动加载.env文件，只加载系统环境变量中不存在的变量
+load_dotenv(env_path, override=False)  # override=False 表示系统环境变量优先
+# 确保系统环境变量优先，手动检查并覆盖
+import os
+env_vars = {
+    'DB_PASSWORD': os.environ.get('DB_PASSWORD'),
+    'MONGO_PASSWORD': os.environ.get('MONGO_PASSWORD'),
+    'EMAIL_PASSWORD': os.environ.get('EMAIL_PASSWORD'),
+    'API_TOKEN': os.environ.get('API_TOKEN'),
+    'FLASK_SECRET_KEY': os.environ.get('FLASK_SECRET_KEY'),
+}
+for key, value in env_vars.items():
+    if value is not None:
+        os.environ[key] = value
+
 # 导入Web应用
 from web_app import app
 
