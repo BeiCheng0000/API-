@@ -1238,6 +1238,7 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                 if expected_status_code_int == actual_status_code_int:
                     assertion_results.append({
                         "type": "status_code",
+                        "field": "status_code",
                         "expected": expected_status_code_int,
                         "actual": actual_status_code_int,
                         "passed": True
@@ -1246,6 +1247,7 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                     assertion_passed = False
                     assertion_results.append({
                         "type": "status_code",
+                        "field": "status_code",
                         "expected": expected_status_code_int,
                         "actual": actual_status_code_int,
                         "passed": False
@@ -1255,6 +1257,7 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
                 assertion_passed = False
                 assertion_results.append({
                     "type": "status_code",
+                    "field": "status_code",
                     "expected": expected_status_code,
                     "actual": actual_status_code,
                     "passed": False
