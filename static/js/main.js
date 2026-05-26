@@ -907,10 +907,6 @@ function addApi() {
  * 加载定时任务列表（兼容性入口，刷新当前选中模块或项目树）
  */
 function loadSchedulerList() {
-    // 清除缓存，确保获取最新数据
-    if (typeof invalidateSchedulerListCache === 'function') {
-        invalidateSchedulerListCache();
-    }
     // 刷新项目树（更新任务计数）
     if (typeof loadSchedulerProjectTree === 'function') {
         loadSchedulerProjectTree();

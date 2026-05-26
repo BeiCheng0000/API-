@@ -6,55 +6,24 @@
 let _schedulerSelectedProject = '';
 let _schedulerSelectedModule = '';
 
-// ========== 定时任务数据缓存机制 ==========
-// 缓存定时任务列表数据，避免短时间内重复请求 /scheduler/list
-let _schedulerListCache = null;
-let _schedulerListCacheTime = 0;
-let _schedulerListFetchPromise = null;
-const _SCHEDULER_LIST_CACHE_TTL = 3000; // 缓存有效期（毫秒）
-
 /**
- * 获取定时任务列表数据（带缓存和请求去重）
- * @param {boolean} forceRefresh - 是否强制刷新
+ * 获取定时任务列表数据（从后端接口直接获取最新数据）
+ * @param {boolean} forceRefresh - 是否强制刷新（保留参数以保持兼容性）
  * @returns {Promise<Array>} 定时任务列表数据
  */
 function fetchSchedulerList(forceRefresh = false) {
-    // 如果有正在进行的请求，直接复用该Promise（请求去重）
-    if (_schedulerListFetchPromise) {
-        return _schedulerListFetchPromise;
-    }
-
-    // 如果缓存有效且非强制刷新，直接返回缓存数据
-    if (!forceRefresh && _schedulerListCache && (Date.now() - _schedulerListCacheTime < _SCHEDULER_LIST_CACHE_TTL)) {
-        return Promise.resolve(_schedulerListCache);
-    }
-
-    // 发起新请求
-    _schedulerListFetchPromise = fetch('/scheduler/list')
+    console.log('[fetchSchedulerList] 开始请求定时任务列表, forceRefresh:', forceRefresh);
+    // 发起新请求，直接从后端接口获取最新数据
+    return fetch('/scheduler/list')
         .then(response => {
+            console.log('[fetchSchedulerList] 接口响应状态:', response.status);
             if (!response.ok) throw new Error('网络响应异常');
             return response.json();
         })
         .then(data => {
-            _schedulerListCache = data;
-            _schedulerListCacheTime = Date.now();
-            _schedulerListFetchPromise = null;
+            console.log('[fetchSchedulerList] 接口返回的数据:', data);
             return data;
-        })
-        .catch(error => {
-            _schedulerListFetchPromise = null;
-            throw error;
         });
-
-    return _schedulerListFetchPromise;
-}
-
-/**
- * 清除定时任务列表缓存
- */
-function invalidateSchedulerListCache() {
-    _schedulerListCache = null;
-    _schedulerListCacheTime = 0;
 }
 
 // ========== 项目数据缓存机制 ==========
@@ -921,88 +890,113 @@ function loadSchedulerProjectTree() {
         const container = document.getElementById('schedulerProjectsList');
         if (!container) return;
 
-        // 同时获取定时任务列表，用于统计每个模块的任务数（使用缓存）
+        let html = '';
+        for (const [projectName, projectData] of Object.entries(projectsData)) {
+            const safeName = escapeHtml(projectName);
+            const modules = projectData.modules || {};
+            const moduleEntries = Object.entries(modules);
+            html += `
+            <div class="tree-project" data-project="${safeName}">
+                <div class="tree-project-row" onclick="toggleSchedulerProject(this.parentElement)">
+                    <div class="tree-toggle"><i class="bi bi-chevron-right"></i></div>
+                    <div class="tree-project-icon"><i class="bi bi-folder-fill"></i></div>
+                    <div class="tree-project-info">
+                        <div class="tree-project-name">${safeName}</div>
+                    </div>
+                </div>
+                <div class="tree-project-children" id="schedulerProjectChildren-${safeName.replace(/ /g, '_')}">
+                    ${moduleEntries.length === 0 ? '<div class="tree-empty-hint"><span>暂无模块</span></div>' : ''}
+                    ${moduleEntries.map(([moduleName, moduleData]) => {
+                        const safeModName = escapeHtml(moduleName);
+                        return `
+                        <div class="tree-module" data-project="${safeName}" data-module="${safeModName}" onclick="selectSchedulerModule('${safeName}', '${safeModName}')">
+                            <div class="tree-module-icon"><i class="bi bi-collection-fill"></i></div>
+                            <div class="tree-module-info">
+                                <div class="tree-module-name">${safeModName}</div>
+                                <div class="tree-module-stat">加载中...</div>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>`;
+        }
+
+        if (!html) {
+            html = `<div class="empty-state">
+                <div class="empty-state-icon"><i class="bi bi-folder2-open"></i></div>
+                <div class="empty-state-title">暂无项目</div>
+            </div>`;
+        }
+        container.innerHTML = html;
+
+        // 恢复之前选中模块的高亮状态，或默认选中第一个项目和第一个模块
+        if (_schedulerSelectedProject && _schedulerSelectedModule) {
+            const selectedModule = container.querySelector(`.tree-module[data-project="${_schedulerSelectedProject}"][data-module="${_schedulerSelectedModule}"]`);
+            if (selectedModule) {
+                selectedModule.classList.add('active');
+            } else {
+                // 之前选中的模块不存在了，重置并默认选中第一个
+                _schedulerSelectedProject = '';
+                _schedulerSelectedModule = '';
+            }
+        }
+
+        // 如果没有选中的项目和模块，默认选中第一个项目和第一个模块
+        console.log('[loadSchedulerProjectTree] 检查选中状态:', _schedulerSelectedProject, _schedulerSelectedModule);
+        if (!_schedulerSelectedProject || !_schedulerSelectedModule) {
+            console.log('[loadSchedulerProjectTree] 没有选中的项目和模块，准备选中第一个');
+            const firstProject = Object.keys(projectsData)[0];
+            console.log('[loadSchedulerProjectTree] 第一个项目:', firstProject);
+            if (firstProject) {
+                const firstModules = projectsData[firstProject].modules || {};
+                const firstModule = Object.keys(firstModules)[0];
+                console.log('[loadSchedulerProjectTree] 第一个模块:', firstModule);
+                if (firstModule) {
+                    // 展开第一个项目
+                    const firstProjectEl = container.querySelector(`.tree-project[data-project="${firstProject}"]`);
+                    if (firstProjectEl) firstProjectEl.classList.add('expanded');
+                    // 选中第一个模块
+                    console.log('[loadSchedulerProjectTree] 准备调用 selectSchedulerModule');
+                    selectSchedulerModule(firstProject, firstModule);
+                }
+            }
+        } else {
+            console.log('[loadSchedulerProjectTree] 已有选中的项目和模块:', _schedulerSelectedProject, _schedulerSelectedModule);
+            // 确保选中的项目展开
+            const selectedProjectEl = container.querySelector(`.tree-project[data-project="${_schedulerSelectedProject}"]`);
+            if (selectedProjectEl) selectedProjectEl.classList.add('expanded');
+            // 加载选中模块的定时任务列表
+            console.log('[loadSchedulerProjectTree] 准备调用 loadSchedulerJobsByModule 加载选中模块的定时任务');
+            loadSchedulerJobsByModule(_schedulerSelectedProject, _schedulerSelectedModule);
+        }
+
+        // 加载定时任务列表，更新任务计数
+        console.log('[loadSchedulerProjectTree] 开始加载定时任务列表，更新任务计数');
         fetchSchedulerList()
         .then(jobs => {
+            console.log('[loadSchedulerProjectTree] 定时任务列表数据:', jobs);
             // 统计每个项目/模块的定时任务数
             const jobCountMap = {};
             jobs.forEach(job => {
                 const key = job.project_name + '/' + job.module_name;
                 jobCountMap[key] = (jobCountMap[key] || 0) + 1;
             });
+            console.log('[loadSchedulerProjectTree] 任务计数:', jobCountMap);
 
-            let html = '';
-            for (const [projectName, projectData] of Object.entries(projectsData)) {
-                const safeName = escapeHtml(projectName);
-                const modules = projectData.modules || {};
-                const moduleEntries = Object.entries(modules);
-                html += `
-                <div class="tree-project" data-project="${safeName}">
-                    <div class="tree-project-row" onclick="toggleSchedulerProject(this.parentElement)">
-                        <div class="tree-toggle"><i class="bi bi-chevron-right"></i></div>
-                        <div class="tree-project-icon"><i class="bi bi-folder-fill"></i></div>
-                        <div class="tree-project-info">
-                            <div class="tree-project-name">${safeName}</div>
-                        </div>
-                    </div>
-                    <div class="tree-project-children" id="schedulerProjectChildren-${safeName.replace(/ /g, '_')}">
-                        ${moduleEntries.length === 0 ? '<div class="tree-empty-hint"><span>暂无模块</span></div>' : ''}
-                        ${moduleEntries.map(([moduleName, moduleData]) => {
-                            const safeModName = escapeHtml(moduleName);
-                            const jobKey = projectName + '/' + moduleName;
-                            const jobCount = jobCountMap[jobKey] || 0;
-                            return `
-                            <div class="tree-module" data-project="${safeName}" data-module="${safeModName}" onclick="selectSchedulerModule('${safeName}', '${safeModName}')">
-                                <div class="tree-module-icon"><i class="bi bi-collection-fill"></i></div>
-                                <div class="tree-module-info">
-                                    <div class="tree-module-name">${safeModName}</div>
-                                    <div class="tree-module-stat">${jobCount} 个定时任务</div>
-                                </div>
-                            </div>`;
-                        }).join('')}
-                    </div>
-                </div>`;
-            }
-
-            if (!html) {
-                html = `<div class="empty-state">
-                    <div class="empty-state-icon"><i class="bi bi-folder2-open"></i></div>
-                    <div class="empty-state-title">暂无项目</div>
-                </div>`;
-            }
-            container.innerHTML = html;
-
-            // 恢复之前选中模块的高亮状态，或默认选中第一个项目和第一个模块
-            if (_schedulerSelectedProject && _schedulerSelectedModule) {
-                const selectedModule = container.querySelector(`.tree-module[data-project="${_schedulerSelectedProject}"][data-module="${_schedulerSelectedModule}"]`);
-                if (selectedModule) {
-                    selectedModule.classList.add('active');
-                } else {
-                    // 之前选中的模块不存在了，重置并默认选中第一个
-                    _schedulerSelectedProject = '';
-                    _schedulerSelectedModule = '';
+            // 更新每个模块的任务计数
+            document.querySelectorAll('#schedulerProjectsList .tree-module').forEach(moduleEl => {
+                const projectName = moduleEl.dataset.project;
+                const moduleName = moduleEl.dataset.module;
+                const jobKey = projectName + '/' + moduleName;
+                const jobCount = jobCountMap[jobKey] || 0;
+                const statEl = moduleEl.querySelector('.tree-module-stat');
+                if (statEl) {
+                    statEl.textContent = `${jobCount} 个定时任务`;
                 }
-            }
-
-            // 如果没有选中的项目和模块，默认选中第一个项目和第一个模块
-            if (!_schedulerSelectedProject || !_schedulerSelectedModule) {
-                const firstProject = Object.keys(projectsData)[0];
-                if (firstProject) {
-                    const firstModules = projectsData[firstProject].modules || {};
-                    const firstModule = Object.keys(firstModules)[0];
-                    if (firstModule) {
-                        // 展开第一个项目
-                        const firstProjectEl = container.querySelector(`.tree-project[data-project="${firstProject}"]`);
-                        if (firstProjectEl) firstProjectEl.classList.add('expanded');
-                        // 选中第一个模块
-                        selectSchedulerModule(firstProject, firstModule);
-                    }
-                }
-            } else {
-                // 确保选中的项目展开
-                const selectedProjectEl = container.querySelector(`.tree-project[data-project="${_schedulerSelectedProject}"]`);
-                if (selectedProjectEl) selectedProjectEl.classList.add('expanded');
-            }
+            });
+        })
+        .catch(error => {
+            console.error('加载定时任务计数失败:', error);
         });
     })
     .catch(error => {
@@ -1021,6 +1015,7 @@ function toggleSchedulerProject(projectEl) {
  * 选择定时任务页面的模块，加载对应的定时任务列表
  */
 function selectSchedulerModule(projectName, moduleName) {
+    console.log('[selectSchedulerModule] 选中模块:', projectName, moduleName);
     _schedulerSelectedProject = projectName;
     _schedulerSelectedModule = moduleName;
 
@@ -1031,8 +1026,19 @@ function selectSchedulerModule(projectName, moduleName) {
     const selectedModule = document.querySelector(`#schedulerProjectsList .tree-module[data-project="${projectName}"][data-module="${moduleName}"]`);
     if (selectedModule) selectedModule.classList.add('active');
 
-    // 加载该模块的定时任务
+    // 加载该模块的定时任务（强制刷新，获取最新数据）
+    console.log('[selectSchedulerModule] 准备调用 loadSchedulerJobsByModule');
     loadSchedulerJobsByModule(projectName, moduleName);
+}
+
+function refreshCurrentModuleScheduler() {
+    console.log('[refreshCurrentModuleScheduler] 开始刷新当前模块的定时任务');
+    if (!_schedulerSelectedProject || !_schedulerSelectedModule) {
+        console.warn('[refreshCurrentModuleScheduler] 没有选中的项目和模块');
+        return;
+    }
+    // 强制刷新，获取最新数据
+    loadSchedulerJobsByModule(_schedulerSelectedProject, _schedulerSelectedModule);
 }
 
 /**
@@ -1089,9 +1095,12 @@ function formatCronExpression(cronExpr) {
 }
 
 function loadSchedulerJobsByModule(projectName, moduleName) {
-    fetchSchedulerList()
+    console.log('[loadSchedulerJobsByModule] 开始加载定时任务:', projectName, moduleName);
+    fetchSchedulerList(true)  // 强制刷新，获取最新数据
     .then(jobs => {
+        console.log('[loadSchedulerJobsByModule] 接口返回的数据:', jobs);
         const filtered = jobs.filter(j => j.project_name === projectName && j.module_name === moduleName);
+        console.log('[loadSchedulerJobsByModule] 过滤后的数据:', filtered);
         const container = document.getElementById('schedulerJobsList');
         if (!container) return;
 
@@ -1101,6 +1110,9 @@ function loadSchedulerJobsByModule(projectName, moduleName) {
         let html = `
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0"><i class="bi bi-collection-fill text-primary me-2"></i>${safeModuleName}</h5>
+                <button class="btn btn-sm btn-outline-primary" onclick="refreshCurrentModuleScheduler()" title="刷新任务列表">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                </button>
             </div>
         `;
 
@@ -1113,10 +1125,18 @@ function loadSchedulerJobsByModule(projectName, moduleName) {
         } else {
             html += '<div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead class="table-light"><tr><th style="width:50px;">序号</th><th>任务名称</th><th>下次执行时间</th><th>Cron表达式</th><th style="width:200px;">操作</th></tr></thead><tbody>';
             filtered.forEach((job, index) => {
+                console.log('[loadSchedulerJobsByModule] 处理任务:', job.name, 'next_run_time:', job.next_run_time);
+                // 格式化下次执行时间
+                let nextRunTimeDisplay = '未知';
+                if (job.next_run_time) {
+                    nextRunTimeDisplay = job.next_run_time;
+                }
+                console.log('[loadSchedulerJobsByModule] 显示的下次执行时间:', nextRunTimeDisplay);
+
                 html += `<tr>
                     <td class="text-center text-muted">${index + 1}</td>
                     <td>${escapeHtml(job.name)}</td>
-                    <td>${job.next_run_time || '未知'}</td>
+                    <td>${nextRunTimeDisplay}</td>
                     <td><code>${escapeHtml(job.cron_expression || job.trigger)}</code><br><small class="text-muted">${formatCronExpression(job.cron_expression || job.trigger)}</small></td>
                     <td>
                         <button class="btn btn-sm btn-outline-secondary me-1" onclick="moveScheduler('${job.id}','up')" title="上移" ${index === 0 ? 'disabled' : ''}><i class="bi bi-arrow-up"></i></button>
@@ -1128,7 +1148,9 @@ function loadSchedulerJobsByModule(projectName, moduleName) {
             });
             html += '</tbody></table></div>';
         }
+        console.log('[loadSchedulerJobsByModule] 准备设置HTML内容');
         container.innerHTML = html;
+        console.log('[loadSchedulerJobsByModule] HTML内容已设置');
     })
     .catch(error => {
         console.error('加载定时任务列表失败:', error);
@@ -1155,8 +1177,6 @@ function filterSchedulerProjects(keyword) {
  * 加载定时任务列表（兼容性入口，刷新当前选中模块或项目树）
  */
 function loadSchedulerList() {
-    // 清除缓存，确保获取最新数据
-    invalidateSchedulerListCache();
     // 刷新项目树（更新任务计数）
     loadSchedulerProjectTree();
     // 如果有选中模块，刷新该模块的任务列表

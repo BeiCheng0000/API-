@@ -321,6 +321,9 @@ def _save_scheduler_jobs():
             job_id = job.id
             sort_order = existing_orders.get(job_id, 0)
 
+            # 记录保存的CRON表达式
+            logger.info(f"保存定时任务到数据库: {job.name}, CRON表达式: {cron_expression}")
+
             db_handler.execute(
                 """INSERT INTO scheduler_jobs (id, name, project_name, module_name, case_index, cron_expression, sort_order)
                    VALUES (%s, %s, %s, %s, %s, %s, %s)""",
@@ -545,14 +548,20 @@ def _extract_cron_expression(trigger):
 
 def _load_scheduler_jobs():
     """从数据库恢复定时任务"""
+    logger.info("=" * 50)
+    logger.info("开始从数据库恢复定时任务")
+    logger.info("=" * 50)
+
     if not db_handler:
         logger.warning("db_handler 为 None，无法恢复定时任务")
         return
 
     try:
         db_handler._ensure_connection()
+        logger.info("数据库连接已确保")
 
         jobs_data = db_handler.query("SELECT * FROM scheduler_jobs ORDER BY sort_order, id")
+        logger.info(f"从数据库查询到 {len(jobs_data) if jobs_data else 0} 条定时任务记录")
 
         if not jobs_data:
             logger.info("数据库中没有定时任务数据")
@@ -561,10 +570,15 @@ def _load_scheduler_jobs():
         restored_count = 0
         for job_info in jobs_data:
             try:
+                logger.info(f"处理定时任务记录: {job_info}")
                 cron_expr = (job_info.get('cron_expression') or '').strip()
                 if not cron_expr:
                     logger.warning(f"跳过无效定时任务({job_info.get('name', '未知')}): cron表达式为空")
                     continue
+
+                # 记录加载的CRON表达式
+                logger.info(f"从数据库加载定时任务: {job_info.get('name', '未知')}, CRON表达式: {cron_expr}")
+                logger.info(f"任务参数: project_name={job_info.get('project_name')}, module_name={job_info.get('module_name')}, case_index={job_info.get('case_index')}")
 
                 scheduler.add_job(
                     func=scheduled_test_job,
@@ -573,14 +587,20 @@ def _load_scheduler_jobs():
                     args=[job_info['project_name'], job_info['module_name'], job_info.get('case_index', 0)],
                     name=job_info['name']
                 )
+                # 触发一次next_run_time的计算
+                job = scheduler.get_job(job_info['id'])
+                if job and job.next_run_time:
+                    logger.info(f"定时任务 {job_info.get('name', '未知')} 下次执行时间: {job.next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                else:
+                    logger.warning(f"定时任务 {job_info.get('name', '未知')} next_run_time 为空")
                 restored_count += 1
             except Exception as e:
-                logger.warning(f"恢复定时任务失败({job_info.get('name', '未知')}): {e}")
+                logger.warning(f"恢复定时任务失败({job_info.get('name', '未知')}): {e}", exc_info=True)
 
-        if restored_count > 0:
-            logger.info(f"已恢复 {restored_count} 个定时任务")
+        logger.info(f"已恢复 {restored_count} 个定时任务")
+        logger.info("=" * 50)
     except Exception as e:
-        logger.error(f"加载定时任务配置失败: {e}")
+        logger.error(f"加载定时任务配置失败: {e}", exc_info=True)
 
 
 # 定时任务调度器
@@ -1473,14 +1493,16 @@ def execute_api_test(api_data: Dict[str, Any]) -> Dict[str, Any]:
 def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None:
     """
     定时测试任务
-    按排序顺序依次执行同模块下所有定时任务接口，确保登录等前置接口先执行、token等变量先提取。
+    执行指定模块中所有需要执行的接口（按顺序执行）
 
     Args:
         project_name: 项目名称
         module_name: 模块名称
         api_id: 触发任务的接口ID（数据库ID），用于标识是哪个job触发的
     """
-    # 使用锁防止同模块的多个定时任务并发执行
+    logger.info(f"[定时测试] 开始执行定时任务: {project_name}/{module_name}[{api_id}]")
+
+    # 使用锁防止同一模块的多个定时任务并发执行
     _scheduler_module_lock_key = f"{project_name}__{module_name}"
     if not hasattr(scheduled_test_job, '_module_locks'):
         scheduled_test_job._module_locks = {}
@@ -1500,51 +1522,124 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
         if project_name in projects_data_for_env:
             proj_env_name = projects_data_for_env[project_name].get('current_env', '')
 
-        # ====== 按排序顺序执行同模块下所有定时任务接口 ======
-        if project_name and module_name and db_handler:
+        logger.info(f"[定时测试] 项目环境: {proj_env_name}")
+
+        if project_name and module_name and api_id and db_handler:
             try:
                 db_handler._ensure_connection()
+                logger.info(f"[定时测试] 查询项目: {project_name}")
                 proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
                 if proj:
                     proj_id = proj[0]['id']
+                    logger.info(f"[定时测试] 查询模块: {module_name}")
                     mod = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s", (proj_id, module_name))
                     if mod:
                         mod_id = mod[0]['id']
-                        # 查询同模块下所有定时任务接口，按sort_order排序
-                        scheduled_apis = db_handler.query(
-                            """SELECT a.*, sj.sort_order FROM apis a
-                               INNER JOIN scheduler_jobs sj ON sj.case_index = a.id AND sj.project_name = %s AND sj.module_name = %s
-                               WHERE a.module_id = %s
-                               ORDER BY sj.sort_order, a.id""",
-                            (project_name, module_name, mod_id)
-                        )
-                        if scheduled_apis:
-                            for api_row in scheduled_apis:
-                                # 构造测试数据并执行
-                                api_data = {
-                                    'case_name': api_row.get('case_name', ''),
-                                    'url': api_row.get('url', ''),
-                                    'method': api_row.get('method', 'GET'),
-                                    'headers': json.loads(api_row.get('headers', '{}')),
-                                    'data': _unwrap_raw(json.loads(api_row.get('data', '{}'))),
-                                    'expected': json.loads(api_row.get('expected', '{}')),
-                                    'extractions': json.loads(api_row.get('extractions', '{}')),
-                                    'project': project_name,
-                                    'module': module_name,
-                                    'source': '定时',
-                                    'task_id': f"{project_name}_{module_name}_{api_row['id']}_{int(time.time())}"
-                                }
+
+                        # 获取当前时间，判断哪些接口需要执行
+                        current_time = datetime.now().astimezone()
+                        logger.info(f"[定时测试] 当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+                        # 获取该模块下所有设置了定时任务的接口
+                        # 直接调用scheduler_list函数获取数据，确保使用相同的next_run_time
+                        with app.test_request_context():
+                            response = scheduler_list()
+                            jobs_data = response.get_json()
+
+                        module_jobs = []
+                        for job_data in jobs_data:
+                            if (job_data['project_name'] == project_name and
+                                job_data['module_name'] == module_name):
+                                # 解析next_run_time字符串为datetime对象
+                                next_run_time = None
+                                if job_data.get('next_run_time'):
+                                    try:
+                                        next_run_time = datetime.strptime(job_data['next_run_time'], '%Y-%m-%d %H:%M:%S')
+                                        # 添加时区信息，使其与current_time兼容
+                                        next_run_time = next_run_time.replace(tzinfo=current_time.tzinfo)
+                                    except Exception as e:
+                                        logger.error(f"解析next_run_time失败: {e}")
+
+                                module_jobs.append({
+                                    'api_id': job_data['api_id'],
+                                    'job_id': job_data['id'],
+                                    'next_run_time': next_run_time,
+                                    'sort_order': job_data.get('sort_order', 0)
+                                })
+
+
+
+                        if not module_jobs:
+                            logger.info(f"[定时测试] 模块 {module_name} 下没有定时任务")
+                            return
+
+                        # 按sort_order排序，确保按顺序执行
+                        module_jobs.sort(key=lambda x: x['sort_order'])
+                        logger.info(f"[定时测试] 模块 {module_name} 下有 {len(module_jobs)} 个定时任务需要执行")
+
+                        # 检查哪些任务应该在当前时间执行（允许1分钟的误差）
+                        jobs_to_execute = []
+                        for job_info in module_jobs:
+                            if job_info['next_run_time']:
+                                logger.info(f"[定时测试] 检查接口 {job_info['api_id']}: next_run_time={job_info['next_run_time']}, type={type(job_info['next_run_time'])}")
+                                logger.info(f"[定时测试] 检查接口 {job_info['api_id']}: current_time={current_time}, type={type(current_time)}")
                                 try:
-                                    result = execute_api_test(api_data)
-                                    logger.info(f"[定时测试] 执行接口 {api_row.get('case_name', '')} (id={api_row['id']}) 完成, 成功={result.get('success')}")
+                                    time_diff = abs((current_time - job_info['next_run_time']).total_seconds())
+                                    logger.info(f"[定时测试] 接口 {job_info['api_id']} 时间差: {time_diff}秒")
+                                    if time_diff <= 60:  # 允许1分钟的误差
+                                        jobs_to_execute.append(job_info['api_id'])
+                                        logger.info(f"[定时测试] 接口 {job_info['api_id']} 需要执行 (下次执行时间: {job_info['next_run_time'].strftime('%Y-%m-%d %H:%M:%S')})")
                                 except Exception as e:
-                                    logger.warning(f"[定时测试] 执行接口 {api_row.get('case_name', '')} (id={api_row['id']}) 失败: {e}")
+                                    logger.error(f"[定时测试] 计算时间差失败: {e}, current_time={current_time}, next_run_time={job_info['next_run_time']}")
+
+                        if not jobs_to_execute:
+                            logger.info(f"[定时测试] 当前时间没有需要执行的接口")
+                            return
+
+                        # 按顺序执行所有需要执行的接口
+                        for api_id in jobs_to_execute:
+                            logger.info(f"[定时测试] 查询接口ID: {api_id}")
+                            api = db_handler.query("SELECT * FROM apis WHERE id = %s", (api_id,))
+                            if not api:
+                                logger.warning(f"定时测试失败: 接口不存在 - {api_id}")
+                                continue
+                            api_row = api[0]
+
+                            # 执行指定的接口
+                            logger.info(f"[定时测试] 执行指定接口: {api_row.get('case_name', '')} (id={api_row['id']})")
+                            api_data = {
+                                'case_name': api_row.get('case_name', ''),
+                                'url': api_row.get('url', ''),
+                                'method': api_row.get('method', 'GET'),
+                                'headers': json.loads(api_row.get('headers', '{}')),
+                                'data': _unwrap_raw(json.loads(api_row.get('data', '{}'))),
+                                'expected': json.loads(api_row.get('expected', '{}')),
+                                'extractions': json.loads(api_row.get('extractions', '{}')),
+                                'project': project_name,
+                                'module': module_name,
+                                'source': '定时',
+                                'task_id': f"{project_name}_{module_name}_{api_row['id']}_{int(time.time())}"
+                            }
+                            try:
+                                result = execute_api_test(api_data)
+                                logger.info(f"[定时测试] 执行接口 {api_row.get('case_name', '')} (id={api_row['id']}) 完成, 成功={result.get('success')}")
+                            except Exception as e:
+                                logger.warning(f"[定时测试] 执行接口 {api_row.get('case_name', '')} (id={api_row['id']}) 失败: {e}")
+                    else:
+                        logger.warning(f"[定时测试] 模块不存在: {module_name}")
+                else:
+                    logger.warning(f"[定时测试] 项目不存在: {project_name}")
             except Exception as e:
                 logger.error(f"定时测试执行失败: {e}", exc_info=True)
         else:
-            logger.error(f"定时测试失败: 参数不完整 - {project_name}/{module_name}[{api_id}]")
+            logger.error(f"定时测试失败: 参数不完整 - project_name={project_name}, module_name={module_name}, api_id={api_id}, db_handler={db_handler is not None}")
     finally:
         lock.release()
+        logger.info(f"[定时测试] 定时任务执行完成: {project_name}/{module_name}")
+
+
+# 启动时恢复持久化的定时任务（必须在 scheduled_test_job 函数定义之后）
+_load_scheduler_jobs()
 
 
 # 设备检测函数
@@ -2507,10 +2602,8 @@ def api_debug():
 
 # 路由：定时任务列表
 @app.route('/scheduler/list')
-@cache_result('scheduler_list', scheduler_cache, timeout=15)  # 缓存15秒
 def scheduler_list():
-
-    """定时任务列表"""
+    """定时任务列表（无缓存，确保实时性）"""
     # 从数据库读取排序信息
     db_sort_orders = {}
     if db_handler:
@@ -2534,10 +2627,23 @@ def scheduler_list():
 
         sort_order = db_sort_orders.get(job.id, 0)
 
+        # 处理next_run_time，确保正确处理时区
+        next_run_time_str = None
+        if job.next_run_time:
+            try:
+                # 如果next_run_time有时区信息，转换为本地时间
+                if job.next_run_time.tzinfo is not None:
+                    next_run_time_str = job.next_run_time.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    next_run_time_str = job.next_run_time.strftime('%Y-%m-%d %H:%M:%S')
+            except Exception as e:
+                logger.error(f"格式化next_run_time失败: {e}")
+                next_run_time_str = None
+
         jobs.append({
             'id': job.id,
             'name': job.name,
-            'next_run_time': job.next_run_time.strftime('%Y-%m-%d %H:%M:%S') if job.next_run_time else None,
+            'next_run_time': next_run_time_str,
             'trigger': str(job.trigger),
             'project_name': project_name,
             'module_name': module_name,
@@ -2623,14 +2729,31 @@ def scheduler_add():
             name=f"{project_name}/{module_name} - {api_data.get('case_name', '未命名')}"
         )
 
-        # 持久化定时任务（先手动插入含sort_order的记录，避免_save丢失排序）
-        _save_scheduler_jobs()
-        # 更新新任务的sort_order
+        # 触发一次next_run_time的计算
+        job = scheduler.get_job(job_id)
+        if job and job.next_run_time:
+            logger.info(f"定时任务 {job_id} 下次执行时间: {job.next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # 直接插入数据库中的定时任务
         if db_handler:
             try:
-                db_handler.execute("UPDATE scheduler_jobs SET sort_order = %s WHERE id = %s", (new_sort_order, job_id))
-            except Exception:
-                pass
+                db_handler._ensure_connection()
+                db_handler.execute(
+                    """INSERT INTO scheduler_jobs (id, name, project_name, module_name, case_index, cron_expression, sort_order)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    (
+                        job_id,
+                        f"{project_name}/{module_name} - {api_data.get('case_name', '未命名')}",
+                        project_name,
+                        module_name,
+                        api_id,
+                        cron_expression,
+                        new_sort_order
+                    )
+                )
+                logger.info(f"已添加定时任务到数据库: {job_id}, CRON表达式: {cron_expression}")
+            except Exception as e:
+                logger.error(f"添加定时任务到数据库失败: {e}")
 
         return jsonify({'success': True, 'message': '定时任务添加成功'})
     except ValueError as e:
@@ -2678,8 +2801,22 @@ def scheduler_update():
             name=job_name
         )
 
-        # 持久化定时任务
-        _save_scheduler_jobs()
+        # 触发一次next_run_time的计算
+        job = scheduler.get_job(job_id)
+        if job and job.next_run_time:
+            logger.info(f"定时任务 {job_id} 下次执行时间: {job.next_run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # 直接更新数据库中的CRON表达式，而不是清空整个表
+        if db_handler:
+            try:
+                db_handler._ensure_connection()
+                db_handler.execute(
+                    "UPDATE scheduler_jobs SET cron_expression = %s WHERE id = %s",
+                    (cron_expression, job_id)
+                )
+                logger.info(f"已更新数据库中的定时任务CRON表达式: {job_id} -> {cron_expression}")
+            except Exception as e:
+                logger.error(f"更新数据库中的定时任务CRON表达式失败: {e}")
 
         return jsonify({'success': True, 'message': '定时任务更新成功'})
     except ValueError as e:
@@ -2696,7 +2833,16 @@ def scheduler_delete(job_id):
     """删除定时任务"""
     try:
         scheduler.remove_job(job_id)
-        _save_scheduler_jobs()
+
+        # 直接从数据库中删除定时任务
+        if db_handler:
+            try:
+                db_handler._ensure_connection()
+                db_handler.execute("DELETE FROM scheduler_jobs WHERE id = %s", (job_id,))
+                logger.info(f"已从数据库中删除定时任务: {job_id}")
+            except Exception as e:
+                logger.error(f"从数据库中删除定时任务失败: {e}")
+
         return jsonify({'success': True, 'message': '定时任务删除成功'})
     except Exception as e:
         logger.error(f"删除定时任务失败: {e}")
@@ -3729,9 +3875,6 @@ def download_backup():
         logger.error(f"下载备份文件失败: {str(e)}")
         return jsonify({'success': False, 'message': f'下载失败: {str(e)}'}), 500
 
-
-# 启动时恢复持久化的定时任务（必须在 scheduled_test_job 函数定义之后）
-_load_scheduler_jobs()
 
 # 启动时同步文件中未入库的记录到数据库
 sync_file_records_to_db()
