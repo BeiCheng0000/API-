@@ -76,6 +76,6 @@ if __name__ == '__main__':
 
     links = fetch_info_from_website(login_url, info_url, credentials, tunnel_name)
     if links:
-        print()
+        print(links)
     else:
         print(f"没有找到名为 {tunnel_name} 的隧道链接。")

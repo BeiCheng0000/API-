@@ -329,6 +329,22 @@ function addProject() {
         return;
     }
 
+    // 验证邮箱格式和数量
+    if (alertEmail) {
+        const emailList = alertEmail.split(',').map(e => e.trim()).filter(e => e);
+        if (emailList.length > 20) {
+            showToast('错误', `报警邮箱最多20个，当前${emailList.length}个`, 'danger');
+            return;
+        }
+        const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        for (const email of emailList) {
+            if (!emailPattern.test(email)) {
+                showToast('错误', `邮箱格式不正确: ${email}`, 'danger');
+                return;
+            }
+        }
+    }
+
     const formData = new FormData();
     formData.append('project_name', projectName);
     formData.append('project_desc', projectDesc);
@@ -420,6 +436,22 @@ function updateProject() {
     if (alertEnabled && !alertEmail) {
         showToast('错误', '启用报警时必须填写报警邮箱', 'danger');
         return;
+    }
+
+    // 验证邮箱格式和数量
+    if (alertEmail) {
+        const emailList = alertEmail.split(',').map(e => e.trim()).filter(e => e);
+        if (emailList.length > 20) {
+            showToast('错误', `报警邮箱最多20个，当前${emailList.length}个`, 'danger');
+            return;
+        }
+        const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        for (const email of emailList) {
+            if (!emailPattern.test(email)) {
+                showToast('错误', `邮箱格式不正确: ${email}`, 'danger');
+                return;
+            }
+        }
     }
 
     const formData = new FormData();

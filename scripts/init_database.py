@@ -164,9 +164,22 @@ class DatabaseInitializer:
         except Exception:
             pass  # 字段已存在
         try:
-            self.db_handler.execute("ALTER TABLE projects ADD COLUMN `alert_email` VARCHAR(255) DEFAULT '' COMMENT '报警邮箱地址'")
+            self.db_handler.execute("ALTER TABLE projects ADD COLUMN `alert_email` TEXT COMMENT '报警邮箱地址，多个邮箱用逗号分隔，最多20个'")
         except Exception:
             pass  # 字段已存在
+
+        # 自动迁移：如果alert_email字段类型不是TEXT，则修改为TEXT（支持存储多个邮箱）
+        try:
+            columns = self.db_handler.query(
+                "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'projects' AND COLUMN_NAME = 'alert_email'"
+            )
+            if columns and 'varchar' in columns[0].get('COLUMN_TYPE', '').lower():
+                self.db_handler.execute(
+                    "ALTER TABLE projects MODIFY COLUMN `alert_email` TEXT COMMENT '报警邮箱地址，多个邮箱用逗号分隔，最多20个'"
+                )
+                logger.info("自动迁移：alert_email字段类型已从VARCHAR修改为TEXT，支持存储多个邮箱")
+        except Exception as migrate_err:
+            logger.warning(f"自动迁移alert_email字段类型失败（新数据库无需迁移）: {migrate_err}")
 
         logger.info("项目表创建成功")
 

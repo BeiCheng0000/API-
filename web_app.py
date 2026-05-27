@@ -731,10 +731,35 @@ def fetch_and_send_domain_links():
                         </html>
                         """
 
-                        # 发送邮件
+                        # 发送邮件：收集所有项目配置的报警邮箱，去重后发送
+                        all_alert_emails = set()
+                        try:
+                            # 查询所有启用了报警的项目邮箱
+                            alert_projects = db_handler.query(
+                                "SELECT alert_email FROM projects WHERE alert_enabled = 1 AND alert_email IS NOT NULL AND alert_email != ''"
+                            )
+                            if alert_projects:
+                                for proj in alert_projects:
+                                    email_str = proj.get('alert_email', '')
+                                    if email_str:
+                                        # 支持逗号分隔的多个邮箱
+                                        for email in email_str.split(','):
+                                            email = email.strip()
+                                            if email:
+                                                all_alert_emails.add(email)
+                        except Exception as collect_err:
+                            logger.warning(f"[域名获取] 收集项目报警邮箱失败: {collect_err}")
+
+                        # 如果没有收集到任何邮箱，使用默认邮箱
+                        if not all_alert_emails:
+                            all_alert_emails.add('941433717@qq.com')
+
+                        email_list = list(all_alert_emails)
+                        logger.info(f"[域名获取] 发送域名更新通知到 {len(email_list)} 个邮箱: {email_list}")
+
                         subject = f"🔗 域名链接更新通知 - {tunnel_name}"
-                        email_handler.send_email(['941433717@qq.com'], subject, email_content, 'html')
-                        logger.info("[域名获取] 邮件发送成功")
+                        email_handler.send_email(email_list, subject, email_content, 'html')
+                        logger.info("[域名获取] 域名更新通知邮件发送成功")
                     else:
                         logger.info("[域名获取] 域名未发生变化，忽略本次更新")
 
@@ -1809,18 +1834,19 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
                                         (project_name,)
                                     )
                                     if proj_alert and proj_alert[0].get('alert_enabled') == 1 and proj_alert[0].get('alert_email'):
-                                        alert_email = proj_alert[0].get('alert_email')
-                                        logger.info(f"[定时测试] 发送报警邮件到: {alert_email}")
-                                        # 发送报警邮件
+                                        alert_email_str = proj_alert[0].get('alert_email')
+                                        # 支持多个邮箱，用逗号分隔，一次性发送给所有邮箱
+                                        alert_emails = [e.strip() for e in alert_email_str.split(',') if e.strip()]
+                                        logger.info(f"[定时测试] 发送报警邮件到: {alert_emails}")
                                         try:
                                             email_handler.send_alert_email(
-                                                to_email=alert_email,
+                                                to_email=alert_emails,
                                                 project_name=project_name,
                                                 module_name=module_name,
                                                 case_name=api_row.get('case_name', ''),
                                                 result=result
                                             )
-                                            logger.info(f"[定时测试] 报警邮件发送成功")
+                                            logger.info(f"[定时测试] 报警邮件发送成功: {alert_emails}")
                                         except Exception as e:
                                             logger.error(f"[定时测试] 报警邮件发送失败: {e}", exc_info=True)
                                     else:
@@ -1934,6 +1960,20 @@ def project_add():
     alert_enabled = request.form.get('alert_enabled', '0').strip()
     alert_email = request.form.get('alert_email', '').strip()
 
+    # 验证邮箱格式和数量
+    if alert_email:
+        email_list = [e.strip() for e in alert_email.split(',') if e.strip()]
+        if len(email_list) > 20:
+            return jsonify({'success': False, 'error': f'报警邮箱最多20个，当前{len(email_list)}个'})
+        # 验证每个邮箱格式
+        import re
+        email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+        for email in email_list:
+            if not email_pattern.match(email):
+                return jsonify({'success': False, 'error': f'邮箱格式不正确: {email}'})
+        # 去重后重新拼接
+        alert_email = ','.join(dict.fromkeys(email_list))
+
     logger.info(f"========== 开始添加项目 ==========")
     logger.info(f"项目名称: {project_name}, 描述: {project_desc}, 报警启用: {alert_enabled}, 报警邮箱: {alert_email}")
 
@@ -2022,6 +2062,20 @@ def project_update():
     project_desc = request.form.get('project_desc', '').strip()
     alert_enabled = request.form.get('alert_enabled', '0').strip()
     alert_email = request.form.get('alert_email', '').strip()
+
+    # 验证邮箱格式和数量
+    if alert_email:
+        email_list = [e.strip() for e in alert_email.split(',') if e.strip()]
+        if len(email_list) > 20:
+            return jsonify({'success': False, 'error': f'报警邮箱最多20个，当前{len(email_list)}个'})
+        # 验证每个邮箱格式
+        import re
+        email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+        for email in email_list:
+            if not email_pattern.match(email):
+                return jsonify({'success': False, 'error': f'邮箱格式不正确: {email}'})
+        # 去重后重新拼接
+        alert_email = ','.join(dict.fromkeys(email_list))
 
     logger.info(f"========== 开始更新项目 ==========")
     logger.info(f"旧项目名称: {old_name}, 新项目名称: {project_name}, 描述: {project_desc}, 报警启用: {alert_enabled}, 报警邮箱: {alert_email}")
