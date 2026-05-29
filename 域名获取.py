@@ -221,7 +221,11 @@ def fetch_tunnel_url(base_url, credentials, tunnel_name):
 def fetch_info_from_website(credentials, tunnel_name):
     """从网站获取域名信息（兼容web_app.py的调用）"""
     # 实际上我们不需要从网站获取信息，直接使用API获取隧道URL
-    base_url = "http://localhost:9200"
+    try:
+        from common.config_handler import config
+        base_url = config.get("domain.base_url", "http://localhost:9200")
+    except ImportError:
+        base_url = "http://localhost:9200"
     logger.info(f"使用API方式获取隧道 {tunnel_name} 的URL")
 
     # 处理credentials参数，兼容web_app.py和直接调用
@@ -235,17 +239,24 @@ def fetch_info_from_website(credentials, tunnel_name):
 
 
 if __name__ == '__main__':
-    base_url = "http://localhost:9200"
-    credentials = {
-        "username": "941433717@qq.com",
-        "password": "k941433717"
-    }
+    # 尝试从配置文件中读取凭据和隧道名称
+    try:
+        from common.config_handler import config
+        base_url = config.get("domain.base_url", "http://localhost:9200")
+        credentials = {
+            "username": config.get("domain.credentials.login", ""),
+            "password": config.get("domain.credentials.password", "")
+        }
+        default_tunnel_name = config.get("domain.tunnel_name", "api自动化平台")
+    except ImportError:
+        base_url = "http://localhost:9200"
+        default_tunnel_name = "api自动化平台"
 
     # 检查是否有命令行参数传入
     if len(sys.argv) > 1:
         tunnel_name = sys.argv[1]  # 第一个命令行参数作为隧道名称
     else:
-        tunnel_name = 'api自动化平台'
+        tunnel_name = default_tunnel_name
         if not tunnel_name:
             print("隧道名称不能为空。")
             sys.exit(1)

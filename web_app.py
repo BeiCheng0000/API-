@@ -636,11 +636,13 @@ def fetch_and_send_domain_links():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from 域名获取 import fetch_info_from_website
 
+        # 从配置文件中获取凭据和隧道名称
+        from common.config_handler import config
         credentials = {
-            'login': '941433717@qq.com',
-            'password': 'k941433717',
+            'login': config.get("domain.credentials.login"),
+            'password': config.get("domain.credentials.password"),
         }
-        tunnel_name = 'api自动化平台'
+        tunnel_name = config.get("domain.tunnel_name", 'api自动化平台')
 
         # 获取域名链接
         link = fetch_info_from_website(credentials, tunnel_name)

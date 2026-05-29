@@ -59,3 +59,11 @@ project:
 report:
   allure:
     history: 20            # Allure 报告保留的历史运行次数
+
+# 域名获取配置
+domain:
+  base_url: "http://localhost:9200"  # API服务地址
+  credentials:
+    login: ""        # 登录邮箱
+    password: ""           # 登录密码
+  tunnel_name: "api自动化平台"         # 隧道名称
