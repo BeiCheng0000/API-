@@ -1,71 +1,246 @@
 import requests
-
-from bs4 import BeautifulSoup
-
+import json
+from common.logger_handler import logger
 import sys
 
+# 登录并获取token
+def login_and_get_token(base_url, credentials):
+    """登录并获取token"""
+    try:
+        # 使用API登录方式
+        login_url = f"{base_url}/api/v1/user/login"
+        logger.info(f"发送登录请求到: {login_url}")
 
-# 登录网站并获取页面内容
+        # 准备登录数据
+        login_data = {
+            "email": credentials.get("username"),
+            "password": credentials.get("password")
+        }
+        logger.info(f"登录凭据: {login_data}")
 
-def fetch_info_from_website(login_url, info_url, credentials, tunnel_name):
-    with requests.Session() as session:
-        try:
-            # 获取登录页面以抓取csrf token
-            login_page = session.get(login_url)
-            login_page.raise_for_status()  # 检查请求是否成功
-            login_page_soup = BeautifulSoup(login_page.text, 'html.parser')
-            # 提取csrf token
-            csrf_token = login_page_soup.find('input', {'name': 'csrf_token'})['value']
-            credentials['csrf_token'] = csrf_token
-            # 登录
-            login_response = session.post(login_url, data=credentials)
-            # 检查是否登录成功
-            if login_response.status_code != 200 or login_response.url == login_url:
-                print("登录失败，请检查您的凭据。")
-                return []
+        # 发送登录请求
+        response = requests.post(login_url, json=login_data)
+        logger.info(f"登录响应状态码: {response.status_code}")
+
+        response.raise_for_status()
+
+        # 解析响应
+        result = response.json()
+        logger.info(f"登录响应内容: {json.dumps(result, indent=2, ensure_ascii=False)}")
+
+        # 提取token
+        if result.get("code") in [0, 20000] and "data" in result and "token" in result["data"]:
+            token = result["data"]["token"]
+            logger.info("登录成功，获取到token")
+            return token
+        else:
+            error_msg = result.get('message', result.get('msg', '未知错误'))
+            logger.error(f"登录失败: {error_msg}")
+            logger.error(f"完整响应: {result}")
+            return None
+
+    except requests.RequestException as e:
+        logger.error(f"登录请求异常: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"响应内容: {e.response.text}")
+        return None
+    except Exception as e:
+        logger.error(f"登录过程中发生错误: {e}")
+        return None
+
+# 获取隧道列表
+def get_tunnel_list(base_url, token, tunnel_name):
+    """获取隧道列表，查找指定名称的隧道并返回其状态和索引"""
+    try:
+        # 获取隧道列表
+        tunnels_url = f"{base_url}/api/v1/tunnels"
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(tunnels_url, headers=headers)
+        response.raise_for_status()
+
+        # 解析响应
+        result = response.json()
+        logger.info(f"获取隧道列表响应: {json.dumps(result, indent=2, ensure_ascii=False)}")
+        if result.get("code") not in [0, 20000] or "data" not in result or "items" not in result["data"]:
+            logger.error("获取隧道列表失败")
+            logger.error(f"响应内容: {result}")
+            return None, None
+
+        tunnels = result["data"]["items"]
+        # 查找指定名称的隧道
+        for i, tunnel in enumerate(tunnels):
+            if tunnel.get("name") == tunnel_name:
+                status = tunnel.get("status", "")
+                logger.info(f"找到隧道 {tunnel_name}，状态: {status}，索引: {i}")
+                return i, status
+
+        logger.error(f"未找到名为 {tunnel_name} 的隧道")
+        return None, None
+
+    except requests.RequestException as e:
+        logger.error(f"获取隧道列表请求异常: {e}")
+        return None, None
+    except Exception as e:
+        logger.error(f"获取隧道列表过程中发生错误: {e}")
+        return None, None
+
+# 启动隧道
+def start_tunnel(base_url, token, tunnel_id):
+    """启动指定ID的隧道"""
+    try:
+        # 启动隧道
+        start_url = f"{base_url}/api/v1/tunnels/{tunnel_id}/start"
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.post(start_url, headers=headers)
+        response.raise_for_status()
+
+        # 解析响应
+        result = response.json()
+        if result.get("code") == 20000:
+            logger.info(f"隧道启动成功: {tunnel_id}")
+            return True
+        else:
+            logger.error(f"隧道启动失败: {result.get('msg', '未知错误')}")
+            return False
+
+    except requests.RequestException as e:
+        logger.error(f"启动隧道请求异常: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"启动隧道过程中发生错误: {e}")
+        return False
+
+# 获取隧道公共URL
+def get_tunnel_public_url(base_url, token, tunnel_index):
+    """获取指定索引的隧道的公共URL"""
+    try:
+        # 获取隧道列表
+        tunnels_url = f"{base_url}/api/v1/tunnels"
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(tunnels_url, headers=headers)
+        response.raise_for_status()
+
+        # 解析响应
+        result = response.json()
+        if result.get("code") not in [0, 20000] or "data" not in result or "items" not in result["data"]:
+            logger.error("获取隧道列表失败")
+            logger.error(f"响应内容: {result}")
+            return None
+
+        tunnels = result["data"]["items"]
+        # 检查索引是否有效
+        if tunnel_index < 0 or tunnel_index >= len(tunnels):
+            logger.error(f"无效的隧道索引: {tunnel_index}")
+            return None
+
+        tunnel = tunnels[tunnel_index]
+        status = tunnel.get("status", "")
+
+        # 如果状态是active，获取公共URL
+        if status == "active":
+            public_urls = tunnel.get("publish_tunnels", [])
+            if public_urls:
+                # 优先选择HTTPS协议的URL
+                https_url = None
+                for url_info in public_urls:
+                    if url_info.get("proto") == "https":
+                        https_url = url_info.get("public_url", "")
+                        logger.info(f"获取到HTTPS公共URL: {https_url}")
+                        return https_url
+
+                # 如果没有HTTPS，取第一个公共URL
+                public_url = public_urls[0].get("public_url", "")
+                logger.info(f"获取到公共URL: {public_url}")
+                return public_url
             else:
-                print("登录成功。")
-                pass
+                logger.error("隧道状态为active但没有公共URL")
+                return None
+        else:
+            logger.error(f"隧道状态不为active: {status}")
+            return None
 
-            # 获取信息页面
-            response = session.get(info_url)
-            response.raise_for_status()
+    except requests.RequestException as e:
+        logger.error(f"获取隧道公共URL请求异常: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"获取隧道公共URL过程中发生错误: {e}")
+        return None
 
-            # 解析页面
-            soup = BeautifulSoup(response.text, 'html.parser')
-            table = soup.find('table')
+def fetch_tunnel_url(base_url, credentials, tunnel_name):
+    """获取指定名称的隧道的公共URL"""
+    # 登录获取token
+    token = login_and_get_token(base_url, credentials)
+    if not token:
+        return None
 
-            if not table:
-                print("未找到隧道列表，请检查对应设备的cpolar服务和网络连接。")
-                return []
+    # 获取隧道列表
+    tunnel_index, status = get_tunnel_list(base_url, token, tunnel_name)
+    if tunnel_index is None:
+        return None
 
-            links = []  # 用于存储找到的链接
-            for row in table.find_all('tr')[1:]:  # 跳过表头
-                cells = row.find_all('td')
-                if len(cells) > 1:
-                    tunnel = cells[0].get_text().strip()
-                    url_cell = row.find('a', href=True)  # 直接在行中查找<a>标签
-                    if tunnel == tunnel_name and url_cell:
-                        links.append(url_cell['href'])  # 添加匹配的链接
-                        # print(f"找到隧道 {tunnel} 的链接: {url_cell['href']}")
-            return links
+    # 如果隧道状态不是active，则启动隧道
+    if status != "active":
+        # 从隧道列表中获取隧道ID
+        tunnels_url = f"{base_url}/api/v1/tunnels"
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(tunnels_url, headers=headers)
+        response.raise_for_status()
 
-        except requests.RequestException as e:
-            print(f"请求异常: {e}")
-        except Exception as e:
-            print(f"发生错误: {e}")
+        result = response.json()
+        if result.get("code") in [0, 20000] and "data" in result and "items" in result["data"]:
+            tunnels = result["data"]["items"]
+            if tunnel_index < len(tunnels):
+                tunnel_id = tunnels[tunnel_index].get("id")
+                if tunnel_id:
+                    # 启动隧道
+                    if not start_tunnel(base_url, token, tunnel_id):
+                        return None
+
+                    # 等待一段时间让隧道启动
+                    import time
+                    time.sleep(10)  # 增加等待时间到10秒
+
+                    # 重新获取隧道状态
+                    tunnel_index_new, status_new = get_tunnel_list(base_url, token, tunnel_name)
+                    logger.info(f"重新获取隧道状态: {status_new}, 索引: {tunnel_index_new}")
+
+                    # 如果状态变为active，获取公共URL
+                    if status_new == "active":
+                        # 使用新的索引获取公共URL
+                        public_url = get_tunnel_public_url(base_url, token, tunnel_index_new)
+                        logger.info(f"获取到公共URL: {public_url}")
+                        return public_url
+                    else:
+                        logger.error(f"隧道启动后状态仍不为active: {status_new}")
+                        return None
+
+    # 如果已经是active状态或启动成功后，直接获取公共URL
+    return get_tunnel_public_url(base_url, token, tunnel_index)
+
+def fetch_info_from_website(credentials, tunnel_name):
+    """从网站获取域名信息（兼容web_app.py的调用）"""
+    # 实际上我们不需要从网站获取信息，直接使用API获取隧道URL
+    base_url = "http://localhost:9200"
+    logger.info(f"使用API方式获取隧道 {tunnel_name} 的URL")
+
+    # 处理credentials参数，兼容web_app.py和直接调用
+    api_credentials = {
+        "username": credentials.get('login') or credentials.get('username'),
+        "password": credentials.get('password')
+    }
+    logger.info(f"API登录凭据: {api_credentials}")
+
+    return fetch_tunnel_url(base_url, api_credentials, tunnel_name)
 
 
 if __name__ == '__main__':
-    login_url = "https://dashboard.cpolar.com/login"
-    info_url = "https://dashboard.cpolar.com/status"
+    base_url = "http://localhost:9200"
     credentials = {
-        'login': '941433717@qq.com',
-        'password': 'k941433717',
+        "username": "941433717@qq.com",
+        "password": "k941433717"
     }
 
     # 检查是否有命令行参数传入
-
     if len(sys.argv) > 1:
         tunnel_name = sys.argv[1]  # 第一个命令行参数作为隧道名称
     else:
@@ -74,8 +249,11 @@ if __name__ == '__main__':
             print("隧道名称不能为空。")
             sys.exit(1)
 
-    links = fetch_info_from_website(login_url, info_url, credentials, tunnel_name)
+    # 获取隧道URL
+    links = fetch_tunnel_url(base_url, credentials, tunnel_name)
     if links:
-        print(links)
+        print(f"获取到的链接: {links}")
+        # 将结果保存到变量links中，供外部使用
+        globals()['links'] = links
     else:
-        print(f"没有找到名为 {tunnel_name} 的隧道链接。")
+        print(f"无法获取名为 {tunnel_name} 的隧道链接。")

@@ -636,9 +636,6 @@ def fetch_and_send_domain_links():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from 域名获取 import fetch_info_from_website
 
-        # 登录信息
-        login_url = "https://dashboard.cpolar.com/login"
-        info_url = "https://dashboard.cpolar.com/status"
         credentials = {
             'login': '941433717@qq.com',
             'password': 'k941433717',
@@ -646,10 +643,10 @@ def fetch_and_send_domain_links():
         tunnel_name = 'api自动化平台'
 
         # 获取域名链接
-        links = fetch_info_from_website(login_url, info_url, credentials, tunnel_name)
+        link = fetch_info_from_website(credentials, tunnel_name)
 
-        if links:
-            logger.info(f"[域名获取] 成功获取到 {len(links)} 个链接")
+        if link:
+            logger.info(f"[域名获取] 成功获取到URL: {link}")
 
             # 检查数据库中是否已存在域名记录
             if db_handler:
@@ -657,22 +654,19 @@ def fetch_and_send_domain_links():
                     db_handler._ensure_connection()
 
                     # 查询数据库中已有的域名
-                    existing_domains = db_handler.query("SELECT id, url FROM domain_links ORDER BY id DESC LIMIT 10")
+                    existing_domains = db_handler.query("SELECT id, url FROM domain_links WHERE tunnel_name = %s ORDER BY id DESC LIMIT 10", (tunnel_name,))
                     existing_urls = set(domain['url'] for domain in existing_domains) if existing_domains else set()
 
                     # 检查是否有新的域名
-                    new_links = [link for link in links if link not in existing_urls]
-
-                    if new_links:
-                        logger.info(f"[域名获取] 发现 {len(new_links)} 个新域名，需要更新")
+                    if link not in existing_urls:
+                        logger.info(f"[域名获取] 发现新域名，需要更新")
 
                         # 保存新域名到数据库
-                        for link in new_links:
-                            db_handler.execute(
-                                "INSERT INTO domain_links (url, tunnel_name, created_at) VALUES (%s, %s, NOW())",
-                                (link, tunnel_name)
-                            )
-                        logger.info(f"[域名获取] 已保存 {len(new_links)} 个新域名到数据库")
+                        db_handler.execute(
+                            "INSERT INTO domain_links (url, tunnel_name, created_at) VALUES (%s, %s, NOW())",
+                            (link, tunnel_name)
+                        )
+                        logger.info(f"[域名获取] 已保存新域名到数据库")
 
                         # 构建邮件内容
                         email_content = f"""
@@ -714,10 +708,9 @@ def fetch_and_send_domain_links():
                         """
 
                         # 添加链接到邮件内容
-                        for i, link in enumerate(new_links, 1):
-                            email_content += f"""
+                        email_content += f"""
                                             <tr>
-                                                <td>{i}</td>
+                                                <td>1</td>
                                                 <td><a href="{link}">{link}</a></td>
                                             </tr>
                         """
