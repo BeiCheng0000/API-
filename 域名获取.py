@@ -50,7 +50,7 @@ def login_and_get_token(base_url, credentials):
 
 # 获取隧道列表
 def get_tunnel_list(base_url, token, tunnel_name):
-    """获取隧道列表，查找指定名称的隧道并返回其状态和索引"""
+    """获取隧道列表，查找指定名称的隧道并返回其ID和状态"""
     try:
         # 获取隧道列表
         tunnels_url = f"{base_url}/api/v1/tunnels"
@@ -68,11 +68,12 @@ def get_tunnel_list(base_url, token, tunnel_name):
 
         tunnels = result["data"]["items"]
         # 查找指定名称的隧道
-        for i, tunnel in enumerate(tunnels):
+        for tunnel in tunnels:
             if tunnel.get("name") == tunnel_name:
                 status = tunnel.get("status", "")
-                logger.info(f"找到隧道 {tunnel_name}，状态: {status}，索引: {i}")
-                return i, status
+                tunnel_id = tunnel.get("id", "")
+                logger.info(f"找到隧道 {tunnel_name}，状态: {status}，ID: {tunnel_id}")
+                return tunnel_id, status
 
         logger.error(f"未找到名为 {tunnel_name} 的隧道")
         return None, None
@@ -111,8 +112,8 @@ def start_tunnel(base_url, token, tunnel_id):
         return False
 
 # 获取隧道公共URL
-def get_tunnel_public_url(base_url, token, tunnel_index):
-    """获取指定索引的隧道的公共URL"""
+def get_tunnel_public_url(base_url, token, tunnel_name):
+    """获取指定名称的隧道的公共URL"""
     try:
         # 获取隧道列表
         tunnels_url = f"{base_url}/api/v1/tunnels"
@@ -122,27 +123,37 @@ def get_tunnel_public_url(base_url, token, tunnel_index):
 
         # 解析响应
         result = response.json()
+        logger.info(f"获取隧道列表响应: {json.dumps(result, indent=2, ensure_ascii=False)}")
         if result.get("code") not in [0, 20000] or "data" not in result or "items" not in result["data"]:
             logger.error("获取隧道列表失败")
             logger.error(f"响应内容: {result}")
             return None
 
         tunnels = result["data"]["items"]
-        # 检查索引是否有效
-        if tunnel_index < 0 or tunnel_index >= len(tunnels):
-            logger.error(f"无效的隧道索引: {tunnel_index}")
+        # 查找指定名称的隧道
+        target_tunnel = None
+        for tunnel in tunnels:
+            if tunnel.get("name") == tunnel_name:
+                target_tunnel = tunnel
+                logger.info(f"找到隧道: {tunnel_name}")
+                break
+
+        if not target_tunnel:
+            logger.error(f"未找到名为 {tunnel_name} 的隧道")
             return None
 
-        tunnel = tunnels[tunnel_index]
-        status = tunnel.get("status", "")
+        status = target_tunnel.get("status", "")
+        tunnel_id = target_tunnel.get("id", "")
+        logger.info(f"处理隧道: {tunnel_name}, 状态: {status}, ID: {tunnel_id}")
 
         # 如果状态是active，获取公共URL
         if status == "active":
-            public_urls = tunnel.get("publish_tunnels", [])
+            public_urls = target_tunnel.get("publish_tunnels", [])
             if public_urls:
                 # 优先选择HTTPS协议的URL
                 https_url = None
                 for url_info in public_urls:
+                    logger.info(f"检查URL: {url_info.get('public_url', '')}, 协议: {url_info.get('proto', '')}")
                     if url_info.get("proto") == "https":
                         https_url = url_info.get("public_url", "")
                         logger.info(f"获取到HTTPS公共URL: {https_url}")
@@ -174,48 +185,38 @@ def fetch_tunnel_url(base_url, credentials, tunnel_name):
         return None
 
     # 获取隧道列表
-    tunnel_index, status = get_tunnel_list(base_url, token, tunnel_name)
-    if tunnel_index is None:
+    tunnel_id, status = get_tunnel_list(base_url, token, tunnel_name)
+    if tunnel_id is None:
         return None
 
     # 如果隧道状态不是active，则启动隧道
     if status != "active":
-        # 从隧道列表中获取隧道ID
-        tunnels_url = f"{base_url}/api/v1/tunnels"
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(tunnels_url, headers=headers)
-        response.raise_for_status()
+        # 使用已经获取的隧道ID启动隧道
+        if tunnel_id:
+            # 启动隧道
+            if not start_tunnel(base_url, token, tunnel_id):
+                return None
 
-        result = response.json()
-        if result.get("code") in [0, 20000] and "data" in result and "items" in result["data"]:
-            tunnels = result["data"]["items"]
-            if tunnel_index < len(tunnels):
-                tunnel_id = tunnels[tunnel_index].get("id")
-                if tunnel_id:
-                    # 启动隧道
-                    if not start_tunnel(base_url, token, tunnel_id):
-                        return None
+            # 等待一段时间让隧道启动
+            import time
+            time.sleep(10)  # 增加等待时间到10秒
 
-                    # 等待一段时间让隧道启动
-                    import time
-                    time.sleep(10)  # 增加等待时间到10秒
+            # 重新获取隧道状态
+            tunnel_id_new, status_new = get_tunnel_list(base_url, token, tunnel_name)
+            logger.info(f"重新获取隧道状态: {status_new}, ID: {tunnel_id_new}")
 
-                    # 重新获取隧道状态
-                    tunnel_index_new, status_new = get_tunnel_list(base_url, token, tunnel_name)
-                    logger.info(f"重新获取隧道状态: {status_new}, 索引: {tunnel_index_new}")
-
-                    # 如果状态变为active，获取公共URL
-                    if status_new == "active":
-                        # 使用新的索引获取公共URL
-                        public_url = get_tunnel_public_url(base_url, token, tunnel_index_new)
-                        logger.info(f"获取到公共URL: {public_url}")
-                        return public_url
-                    else:
-                        logger.error(f"隧道启动后状态仍不为active: {status_new}")
-                        return None
+            # 如果状态变为active，获取公共URL
+            if status_new == "active":
+                # 使用隧道名称获取公共URL
+                public_url = get_tunnel_public_url(base_url, token, tunnel_name)
+                logger.info(f"获取到公共URL: {public_url}")
+                return public_url
+            else:
+                logger.error(f"隧道启动后状态仍不为active: {status_new}")
+                return None
 
     # 如果已经是active状态或启动成功后，直接获取公共URL
-    return get_tunnel_public_url(base_url, token, tunnel_index)
+    return get_tunnel_public_url(base_url, token, tunnel_name)
 
 def fetch_info_from_website(credentials, tunnel_name):
     """从网站获取域名信息（兼容web_app.py的调用）"""
