@@ -1,7 +1,8 @@
+import time
+import sys
 import requests
 import json
 from common.logger_handler import logger
-import sys
 
 # 登录并获取token
 def login_and_get_token(base_url, credentials):
@@ -190,32 +191,24 @@ def fetch_tunnel_url(base_url, credentials, tunnel_name):
         return None
 
     # 如果隧道状态不是active，则启动隧道
-    if status != "active":
-        # 使用已经获取的隧道ID启动隧道
-        if tunnel_id:
-            # 启动隧道
-            if not start_tunnel(base_url, token, tunnel_id):
-                return None
+    if status != "active" and tunnel_id:
+        # 启动隧道
+        if not start_tunnel(base_url, token, tunnel_id):
+            return None
 
-            # 等待一段时间让隧道启动
-            import time
-            time.sleep(10)  # 增加等待时间到10秒
+        # 等待一段时间让隧道启动
+        time.sleep(10)
 
-            # 重新获取隧道状态
-            tunnel_id_new, status_new = get_tunnel_list(base_url, token, tunnel_name)
-            logger.info(f"重新获取隧道状态: {status_new}, ID: {tunnel_id_new}")
+        # 重新获取隧道状态
+        tunnel_id_new, status_new = get_tunnel_list(base_url, token, tunnel_name)
+        logger.info(f"重新获取隧道状态: {status_new}, ID: {tunnel_id_new}")
 
-            # 如果状态变为active，获取公共URL
-            if status_new == "active":
-                # 使用隧道名称获取公共URL
-                public_url = get_tunnel_public_url(base_url, token, tunnel_name)
-                logger.info(f"获取到公共URL: {public_url}")
-                return public_url
-            else:
-                logger.error(f"隧道启动后状态仍不为active: {status_new}")
-                return None
+        # 如果状态不是active，返回None
+        if status_new != "active":
+            logger.error(f"隧道启动后状态仍不为active: {status_new}")
+            return None
 
-    # 如果已经是active状态或启动成功后，直接获取公共URL
+    # 获取公共URL（已经是active状态或启动成功后）
     return get_tunnel_public_url(base_url, token, tunnel_name)
 
 def fetch_info_from_website(credentials, tunnel_name):
@@ -250,6 +243,10 @@ if __name__ == '__main__':
         default_tunnel_name = config.get("domain.tunnel_name", "api自动化平台")
     except ImportError:
         base_url = "http://localhost:9200"
+        credentials = {
+            "username": "",
+            "password": ""
+        }
         default_tunnel_name = "api自动化平台"
 
     # 检查是否有命令行参数传入

@@ -21,26 +21,12 @@ class EmailHandler:
         self.sender = config.get('email.sender', '')
         # 优先从环境变量读取密码，如果没有则从配置文件读取
         import os
-        # 打印所有包含 EMAIL 或 email 的环境变量
-        logger.info("[邮件配置] 所有包含 EMAIL 的环境变量:")
-        for key, value in os.environ.items():
-            if 'EMAIL' in key.upper():
-                logger.info(f"  {key} = {'*' * len(value) if value else '空'}")
-
         env_password = os.environ.get('EMAIL_PASSWORD')
-        logger.info(f"[邮件配置] 系统环境变量 EMAIL_PASSWORD 的值: {'空' if not env_password else '存在'}")
-        logger.info(f"[邮件配置] 系统环境变量 EMAIL_PASSWORD 的长度: {len(env_password) if env_password else 0}")
-        logger.info(f"[邮件配置] 系统环境变量 EMAIL_PASSWORD 的类型: {type(env_password)}")
-        logger.info(f"[邮件配置] 配置文件 email.password 的值: {config.get('email.password', '空')}")
         self.password = env_password or config.get('email.password', '')
         self.sender_name = config.get('project.name', 'API自动化测试平台')
 
-        # 打印配置信息（用于调试）
-        logger.info(f"[邮件配置] smtp_server={self.smtp_server}")
-        logger.info(f"[邮件配置] smtp_port={self.smtp_port}")
-        logger.info(f"[邮件配置] sender={self.sender}")
-        logger.info(f"[邮件配置] password={'*' * len(self.password) if self.password else '空'}")
-        logger.info(f"[邮件配置] sender_name={self.sender_name}")
+        # 日志记录配置信息（敏感信息脱敏）
+        logger.info(f"[邮件配置] smtp_server={self.smtp_server}, smtp_port={self.smtp_port}, sender={self.sender}, password={'已配置' if self.password else '未配置'}")
 
         # 检查配置是否完整
         if not all([self.smtp_server, self.sender, self.password]):

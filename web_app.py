@@ -191,7 +191,8 @@ def cache_result(cache_key, cache_instance, timeout=None):
 
 # 创建Flask应用
 app = Flask(__name__)
-app.secret_key = 'api_automation_platform_secret_key_2024'  # ⚠️ 生产环境请修改为随机字符串，建议通过环境变量 FLASK_SECRET_KEY 设置
+# 优先从环境变量读取，否则使用随机密钥（每次重启会变化，生产环境请设置 FLASK_SECRET_KEY 环境变量）
+app.secret_key = os.environ.get('FLASK_SECRET_KEY') or os.urandom(24).hex()
 
 # 启用GZIP压缩
 Compress(app)
@@ -745,9 +746,14 @@ def fetch_and_send_domain_links():
                         except Exception as collect_err:
                             logger.warning(f"[域名获取] 收集项目报警邮箱失败: {collect_err}")
 
-                        # 如果没有收集到任何邮箱，使用默认邮箱
+                        # 如果没有收集到任何邮箱，从环境变量读取默认邮箱
                         if not all_alert_emails:
-                            all_alert_emails.add('941433717@qq.com')
+                            default_email = os.environ.get('DEFAULT_ALERT_EMAIL', '')
+                            if default_email:
+                                all_alert_emails.add(default_email)
+                            else:
+                                logger.warning("[域名获取] 没有配置任何报警邮箱，跳过邮件发送")
+                                return
 
                         email_list = list(all_alert_emails)
                         logger.info(f"[域名获取] 发送域名更新通知到 {len(email_list)} 个邮箱: {email_list}")
@@ -2668,46 +2674,8 @@ def apis_get(project_name, module_name, api_id):
         return jsonify({'error': f'获取接口数据失败: {str(e)}'})
 
 
-# 路由：添加模块
-@app.route('/projects/<project_name>/modules/add', methods=['POST'])
-def add_module(project_name):
-    """添加模块"""
-    from urllib.parse import unquote
-    project_name = unquote(project_name)
-    module_name = request.form.get('module_name', '').strip()
-    module_desc = request.form.get('module_desc', '').strip()
 
-    if not module_name:
-        return jsonify({'success': False, 'error': '模块名称不能为空'})
-
-    if not db_handler:
-        return jsonify({'success': False, 'error': '数据库未连接'})
-
-    try:
-        db_handler._ensure_connection()
-
-        # 查询项目ID
-        proj = db_handler.query("SELECT id FROM projects WHERE name = %s", (project_name,))
-        if not proj:
-            return jsonify({'success': False, 'error': '项目不存在'})
-        proj_id = proj[0]['id']
-
-        # 检查模块是否已存在
-        existing = db_handler.query("SELECT id FROM modules WHERE project_id = %s AND name = %s",
-                                    (proj_id, module_name))
-        if existing:
-            return jsonify({'success': False, 'error': '模块已存在'})
-
-        # 添加模块
-        db_handler.execute(
-            "INSERT INTO modules (project_id, name, description) VALUES (%s, %s, %s)",
-            (proj_id, module_name, module_desc)
-        )
-
-        return jsonify({'success': True, 'message': '模块添加成功'})
-    except Exception as e:
-        logger.error(f"添加模块失败: {e}", exc_info=True)
-        return jsonify({'success': False, 'error': f'添加模块失败: {str(e)}'})
+# 注意：添加模块的路由已在上面定义（module_add），此处不再重复
 
 
 # 路由：添加API（旧版，基于YAML文件）

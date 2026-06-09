@@ -1,4 +1,5 @@
 
+
 """
 启动Web应用（生产模式，使用Waitress WSGI服务器）
 """
@@ -12,20 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # 加载.env文件（仅当系统环境变量不存在时才从.env文件读取）
 from dotenv import load_dotenv
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
-# 手动加载.env文件，只加载系统环境变量中不存在的变量
 load_dotenv(env_path, override=False)  # override=False 表示系统环境变量优先
-# 确保系统环境变量优先，手动检查并覆盖
-import os
-env_vars = {
-    'DB_PASSWORD': os.environ.get('DB_PASSWORD'),
-    'MONGO_PASSWORD': os.environ.get('MONGO_PASSWORD'),
-    'EMAIL_PASSWORD': os.environ.get('EMAIL_PASSWORD'),
-    'API_TOKEN': os.environ.get('API_TOKEN'),
-    'FLASK_SECRET_KEY': os.environ.get('FLASK_SECRET_KEY'),
-}
-for key, value in env_vars.items():
-    if value is not None:
-        os.environ[key] = value
 
 # 导入Web应用
 from web_app import app
@@ -34,7 +22,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='API自动化测试平台')
-    parser.add_argument('--port', type=int, default=5000, help='服务端口（默认5000）')
+    parser.add_argument('--port', type=int, default=5001, help='服务端口（默认5001）')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='监听地址（默认0.0.0.0）')
     parser.add_argument('--dev', action='store_true', help='开发模式（使用Flask开发服务器）')
     args = parser.parse_args()

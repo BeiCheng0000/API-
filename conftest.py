@@ -10,7 +10,6 @@ import allure
 from api.base_api import BaseAPI
 from common.config_handler import config, env_config
 from common.logger_handler import logger
-from utils.tools import DataUtils, JsonUtils, FileUtils, AssertUtils, StringUtils
 
 
 @pytest.fixture(scope="session", autouse=True)
