@@ -22,7 +22,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='API自动化测试平台')
-    parser.add_argument('--port', type=int, default=5001, help='服务端口（默认5001）')
+    parser.add_argument('--port', type=int, default=5000, help='服务端口（默认5001）')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='监听地址（默认0.0.0.0）')
     parser.add_argument('--dev', action='store_true', help='开发模式（使用Flask开发服务器）')
     args = parser.parse_args()

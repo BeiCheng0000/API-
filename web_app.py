@@ -109,7 +109,7 @@ from common.logger_handler import logger
 from common.config_handler import env_config
 from common.db_handler import MySQLHandler
 from common.email_handler import email_handler
-from utils.cache_bypass_new import _get_projects_directly
+from utils.cache_bypass_new import _get_projects_directly, bypass_cache
 from utils.session_manager import session_manager
 from utils.get_projects_fixed_new import get_projects as get_projects_fixed
 
@@ -1917,29 +1917,48 @@ def mobile():
 def api_top_stats():
     """获取顶部统计数据（项目数、模块数、接口数、定时任务数）"""
 
+    # 清除缓存，确保获取最新数据
+    from utils.cache_bypass_new import clear_project_cache
+    clear_project_cache()
+
     projects_data = get_projects()
     
     # 项目总数
     project_count = len(projects_data)
+    logger.debug(f"项目总数: {project_count}")
     
     # 模块总数和接口总数
     module_count = 0
     api_count = 0
-    for project_data in projects_data.values():
+    for project_name, project_data in projects_data.items():
         if isinstance(project_data, dict) and 'modules' in project_data:
             modules = project_data['modules']
             module_count += len(modules)
-            for module_data in modules.values():
+            logger.debug(f"项目: {project_name}, 模块数量: {len(modules)}")
+            for module_name, module_data in modules.items():
                 if isinstance(module_data, dict) and 'apis' in module_data:
                     api_count += len(module_data['apis'])
+                    logger.debug(f"项目: {project_name}, 模块: {module_name}, 接口数量: {len(module_data['apis'])}")
     
     # 定时任务总数
     scheduler_count = len(scheduler.get_jobs())
+    
+    # 直接从数据库查询接口数量，验证统计结果
+    try:
+        db_handler = MySQLHandler()
+        db_handler.connect()
+        direct_api_count = db_handler.query("SELECT COUNT(*) as count FROM apis")
+        direct_api_count = direct_api_count[0]['count'] if direct_api_count else 0
+        logger.debug(f"直接从数据库查询的接口数量: {direct_api_count}")
+    except Exception as e:
+        logger.error(f"直接查询数据库接口数量失败: {e}")
+        direct_api_count = 0
     
     return jsonify({
         'project_count': project_count,
         'module_count': module_count,
         'api_count': api_count,
+        'direct_api_count': direct_api_count,
         'scheduler_count': scheduler_count
     })
 

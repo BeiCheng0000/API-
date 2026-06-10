@@ -657,7 +657,8 @@ function loadTopStats() {
             
             if (statProjects) statProjects.textContent = data.project_count || 0;
             if (statModules) statModules.textContent = data.module_count || 0;
-            if (statApis) statApis.textContent = data.api_count || 0;
+            // 使用直接从数据库查询的接口数量，确保准确性
+            if (statApis) statApis.textContent = data.direct_api_count || data.api_count || 0;
             if (statSchedulers) statSchedulers.textContent = data.scheduler_count || 0;
         })
         .catch(err => {
