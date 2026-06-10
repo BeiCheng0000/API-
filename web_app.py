@@ -1705,9 +1705,9 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
         scheduled_test_job._module_locks[_scheduler_module_lock_key] = threading.Lock()
 
     lock = scheduled_test_job._module_locks[_scheduler_module_lock_key]
-    if not lock.acquire(blocking=False):
-        logger.info(f"[定时测试] 同模块任务正在执行，跳过: {project_name}/{module_name}[{api_id}]")
-        return
+    # 使用阻塞锁，等待前一个任务完成
+    lock.acquire()
+    logger.info(f"[定时测试] 获取模块锁，开始执行任务: {project_name}/{module_name}[{api_id}]")
 
     try:
         # 获取项目级别的环境配置 - 直接从数据库获取最新数据，不使用缓存
@@ -1772,14 +1772,27 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
                         # 确定需要执行的接口列表
                         # APScheduler触发任务时，next_run_time已经被更新为下一次执行时间
                         # 所以不能依赖next_run_time来判断是否需要执行
-                        # 策略：被触发的接口一定执行，同模块下其他接口检查是否也应该在当前时间执行
+                        # 策略：按照sort_order顺序检查并执行任务
                         jobs_to_execute = []
-
+                        
+                        # 找到当前触发任务的sort_order
+                        current_job_order = None
                         for job_info in module_jobs:
+                            if job_info['api_id'] == api_id:
+                                current_job_order = job_info['sort_order']
+                                break
+                        
+                        # 按照sort_order顺序处理任务
+                        for job_info in module_jobs:
+                            # 如果当前任务还没到触发点，跳过
+                            if job_info['sort_order'] > current_job_order:
+                                logger.info(f"[定时测试] 接口 {job_info['api_id']} (sort_order={job_info['sort_order']}) 大于当前任务(sort_order={current_job_order})，跳过")
+                                continue
+                                
                             # 被APScheduler触发的接口，一定执行
                             if job_info['api_id'] == api_id:
                                 jobs_to_execute.append(job_info['api_id'])
-                                logger.info(f"[定时测试] 接口 {job_info['api_id']} 被APScheduler触发，需要执行")
+                                logger.info(f"[定时测试] 接口 {job_info['api_id']} (sort_order={job_info['sort_order']}) 被APScheduler触发，需要执行")
                                 continue
 
                             # 同模块下其他接口：检查是否也应该在当前时间执行
@@ -1790,7 +1803,7 @@ def scheduled_test_job(project_name: str, module_name: str, api_id: int) -> None
                                     logger.info(f"[定时测试] 检查接口 {job_info['api_id']}: next_run_time={job_info['next_run_time']}, 时间差: {time_diff}秒")
                                     if time_diff <= 60:
                                         jobs_to_execute.append(job_info['api_id'])
-                                        logger.info(f"[定时测试] 接口 {job_info['api_id']} 在当前时间窗口内，需要执行")
+                                        logger.info(f"[定时测试] 接口 {job_info['api_id']} (sort_order={job_info['sort_order']}) 在当前时间窗口内，需要执行")
                                 except Exception as e:
                                     logger.error(f"[定时测试] 计算时间差失败: {e}")
 
